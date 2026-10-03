@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "midtown-comics-cli"
+version = "0.1.0"
+description = "Headless command-line client for Midtown Comics account data"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "beautifulsoup4>=4.12,<5",
+  "click>=8.1,<9",
+  "requests>=2.31,<3",
+]
+
+[project.optional-dependencies]
+browser = ["playwright>=1.45,<2"]
+test = ["pytest>=8,<9"]
+
+[project.scripts]
+midtown = "midtown.cli:cli"
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
