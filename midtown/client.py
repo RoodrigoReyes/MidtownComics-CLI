@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 from .credentials import load_session_cookies, save_session
 from .parsers import (
     parse_account_profile,
+    parse_cart,
     parse_order_detail,
     parse_orders,
     parse_preview_items,
@@ -133,6 +134,17 @@ class MidtownClient:
 
     def account(self) -> dict:
         return parse_account_profile(self._post_authenticated("/acs-contents").text)
+
+    def cart(self) -> dict:
+        """Items in the shopping cart (read-only)."""
+        # The quick cart also answers anonymous visitors with a guest cart, so an
+        # expired session would look like an empty cart. Confirm the login on an
+        # account endpoint first; it logs in again automatically if needed.
+        self._post_authenticated("/acs-contents")
+        response = self.session.post(urljoin(self.base_url, "/cart-load-quick"), data={"refresh": 1}, timeout=30)
+        response.raise_for_status()
+        self._save_cookies()
+        return parse_cart(response.text, self.base_url)
 
     def preorders(self) -> list[dict]:
         """Items not yet released: pending items of regular orders plus Previews pre-orders."""
