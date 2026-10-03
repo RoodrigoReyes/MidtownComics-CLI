@@ -6,7 +6,6 @@ import os
 import secrets
 import shutil
 import subprocess
-import sys
 import time
 import urllib.request
 from urllib.parse import urljoin
@@ -104,7 +103,7 @@ def run_automated_login() -> None:
     except ImportError as exc:
         raise RemoteLoginError("Install browser support with: python -m pip install -e '.[browser]'") from exc
 
-    email, password = read_credentials(interactive=False)
+    email, password = read_credentials()
     _prepare_profile()
 
     with sync_playwright() as playwright:
@@ -130,7 +129,7 @@ def run_automated_login() -> None:
                 page.click("#btnLogin")
 
             if LOGIN_REJECTED_TEXT in page.inner_text("body").lower():
-                raise RemoteLoginError("Midtown rejected the stored email/password; run `midtown auth configure`")
+                raise RemoteLoginError("Midtown rejected the email/password; check MIDTOWN_EMAIL and MIDTOWN_PASSWORD in .env")
             if not _save_validated_context_cookies(context):
                 raise RemoteLoginError(f"Automated Midtown login did not authenticate (landed on {page.url})")
         finally:
@@ -227,13 +226,3 @@ def run_remote_login(timeout: int = DEFAULT_TIMEOUT) -> None:
             except subprocess.TimeoutExpired:
                 process.kill()
 
-
-def run_browser_login(auto: bool = True, timeout: int = DEFAULT_TIMEOUT) -> None:
-    """Try local automated login first, then use the temporary remote browser."""
-    if auto:
-        try:
-            run_automated_login()
-            return
-        except Exception as exc:
-            print(f"Automated login failed: {exc}. Falling back to the remote browser.", file=sys.stderr, flush=True)
-    run_remote_login(timeout=timeout)
