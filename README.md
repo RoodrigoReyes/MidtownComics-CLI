@@ -31,6 +31,7 @@ midtown
 │   └── export              save as JSON or CSV
 ├── comics                  every comic you bought, newest first, with a total
 ├── preorders               pre-ordered comics not released yet, with a total
+├── cart                    shopping cart with total (read-only)
 ├── wishlist                wishlist with current prices
 │   └── export              save as JSON or CSV
 ├── search <text>           catalog search [--preorders] [--out-of-stock]
@@ -51,6 +52,7 @@ midtown orders --by-month --from 2026-01-01
 midtown comics --by-month 2026-09
 midtown orders export --format csv -o orders.csv
 midtown preorders
+midtown cart
 midtown wishlist --json
 midtown search "absolute batman" --preorders --out-of-stock
 midtown account
@@ -58,6 +60,7 @@ midtown account
 
 - **`preorders`** lists items with status `Pending` inside regular orders (release date read from each product page) plus Midtown Previews pre-orders (`My Pre-Order Items`), and ends with the combined quantity and price.
 - **`search`** mirrors the website: pre-orders and sold-out comics are hidden unless `--preorders` ("Include Pre-orders") or `--out-of-stock` ("Show out of stock") are given. Each result has `availability` (`in stock`, `pre-order`, `out of stock`) and `release_date`; cards the site lazy-loads are completed through `/search-load-product-body`, so a 100-result page takes a few seconds.
+- **`cart`** reads the cart dropdown (`/cart-load-quick`): quantity, title, unit price and subtotal, the cart total, and how much is left for free shipping. It never changes the cart. Because the site also serves anonymous guest carts, it first confirms the login on an account endpoint so an expired session is renewed instead of showing an empty cart.
 - **`orders stats`** reports orders, comics, total spent, distinct products and a breakdown by status.
 - **Periods** — `orders`, `orders stats` and `comics` accept:
   - `--by-month`: totals per month. `--by-month YYYY-MM` (e.g. `2026-09`) instead lists only that month (orders, comics, or stats for that month).

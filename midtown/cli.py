@@ -218,6 +218,7 @@ def cli(ctx: click.Context) -> None:
       midtown orders stats --by-month
       midtown comics --from 2026-09-01 --to 2026-09-30
       midtown preorders
+      midtown cart
       midtown search "absolute batman" --preorders --out-of-stock
       midtown wishlist --json
     """
@@ -559,6 +560,25 @@ def preorders(ctx: click.Context) -> None:
         ("PRICE", lambda item: item.get("unit_price"), ">"),
         ("ORDER", lambda item: item.get("order_number"), "<"),
     ], empty="No pending pre-orders.", footer=f"Total: {quantity} items · ${total:.2f}")
+
+
+@cli.command()
+@json_option
+@click.pass_context
+def cart(ctx: click.Context) -> None:
+    """Show your shopping cart (read-only)."""
+    result = _client_call("cart")
+    if _wants_json(ctx) or not result["items"]:
+        output(ctx, result if _wants_json(ctx) else [], empty="Your cart is empty.")
+        return
+    output(ctx, result["items"], [
+        ("QTY", lambda item: item.get("quantity", 1), ">"),
+        ("TITLE", lambda item: item.get("title"), "<"),
+        ("PRICE", lambda item: item.get("unit_price"), ">"),
+        ("SUBTOTAL", lambda item: round((item.get("unit_price") or 0) * item.get("quantity", 1), 2), ">"),
+    ], footer=f"Total: {result['count']} items · {_money(result['total'])}")
+    if result.get("free_shipping_remaining"):
+        click.echo(f"Spend {_money(result['free_shipping_remaining'])} more for free shipping on comics.")
 
 
 @cli.group(invoke_without_command=True)

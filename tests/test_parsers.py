@@ -964,3 +964,86 @@ def test_by_month_value_must_be_year_month(monkeypatch):
         result = CliRunner().invoke(cli, ["comics", "--by-month", bad])
         assert result.exit_code != 0, bad
         assert "YYYY-MM" in result.output
+
+
+CART_HTML = """<a href="https://www.midtowncomics.com/checkout?plid=603" id="cart-DropdownMenuLink">Cart</a>
+<div id="cart-dropdown"><div class="item-count"><span class="bold" id="cart-drop-count">3</span> Items In Cart</div>
+<p role="alert"> Spend <span class="bold" id="ct-progress-count">$78.07</span> to receive<span class="bold"> FREE Shipping on Comics!</span></p>
+<ul class="product-section">
+  <li class="row product-card"><div class="col-4"><div class="row product-details">
+    <a href="https://www.midtowncomics.com/product/2566506">Absolute Batman #23 Cover A (Near Mint)</a></div>
+    <div class="row remove"><a href="javascript:midtown.common.save_cart(2566506,0)">Remove</a></div></div>
+    <div class="col-1 cart-qty"><p>1</p></div><div class="col-3 price bold"> $4.95 </div></li>
+  <li class="row product-card"><div class="col-4"><div class="row product-details">
+    <a href="https://www.midtowncomics.com/product/2587261">Batman Of Two Worlds #1 (One-Shot)</a></div></div>
+    <div class="col-1 cart-qty"><p>2</p></div><div class="col-3 price bold"> $2.99 </div></li>
+</ul>
+<div class="col-5 total"><span class="bold">Total</span> <span class="price" id="cart-total">$10.93</span></div></div>"""
+
+EMPTY_CART_HTML = """<span id="cart-drop-count">0</span>
+<p role="alert"> Spend <span id="ct-progress-count">$89.00</span> to receive FREE Shipping on Comics!</p>
+<ul class="product-section"><div class="row product-card empty-cart"><p>Your Cart is empty</p></div></ul>
+<span class="price" id="cart-total">$0.00</span>"""
+
+
+def test_parse_cart_reads_items_totals_and_free_shipping_gap():
+    from midtown.parsers import parse_cart
+
+    assert parse_cart(CART_HTML, "https://www.midtowncomics.com") == {
+        "items": [
+            {"product_id": "2566506", "title": "Absolute Batman #23 Cover A (Near Mint)", "quantity": 1,
+             "unit_price": 4.95, "product_url": "https://www.midtowncomics.com/product/2566506"},
+            {"product_id": "2587261", "title": "Batman Of Two Worlds #1 (One-Shot)", "quantity": 2,
+             "unit_price": 2.99, "product_url": "https://www.midtowncomics.com/product/2587261"},
+        ],
+        "count": 3,
+        "total": 10.93,
+        "free_shipping_remaining": 78.07,
+        "currency": "USD",
+    }
+    empty = parse_cart(EMPTY_CART_HTML, "https://www.midtowncomics.com")
+    assert (empty["items"], empty["count"], empty["total"]) == ([], 0, 0.0)
+
+
+def test_client_cart_confirms_login_before_reading_quick_cart(monkeypatch):
+    from types import SimpleNamespace
+
+    import midtown.client as client_module
+
+    client = client_module.MidtownClient.__new__(client_module.MidtownClient)
+    client.base_url = "https://www.midtowncomics.com"
+    calls = []
+    monkeypatch.setattr(client, "_post_authenticated", lambda path: calls.append(("auth", path)))
+    client.session = SimpleNamespace(post=lambda url, data, timeout: calls.append(("post", url, data)) or SimpleNamespace(
+        text=CART_HTML, raise_for_status=lambda: None))
+    monkeypatch.setattr(client, "_save_cookies", lambda: None)
+
+    assert client.cart()["count"] == 3
+    assert calls == [
+        ("auth", "/acs-contents"),
+        ("post", "https://www.midtowncomics.com/cart-load-quick", {"refresh": 1}),
+    ]
+
+
+def test_cart_cli_prints_items_total_and_free_shipping(monkeypatch):
+    from midtown.parsers import parse_cart
+
+    _fake_client(monkeypatch, cart=parse_cart(CART_HTML, "https://www.midtowncomics.com"))
+
+    lines = CliRunner().invoke(cli, ["cart"]).output.splitlines()
+
+    assert lines[0].split() == ["QTY", "TITLE", "PRICE", "SUBTOTAL"]
+    assert lines[2].split()[0] == "2" and lines[2].split()[-2:] == ["2.99", "5.98"]
+    assert lines[-2] == "Total: 3 items · $10.93"
+    assert lines[-1] == "Spend $78.07 more for free shipping on comics."
+
+
+def test_cart_cli_empty_and_json(monkeypatch):
+    import json
+
+    from midtown.parsers import parse_cart
+
+    _fake_client(monkeypatch, cart=parse_cart(EMPTY_CART_HTML, "https://www.midtowncomics.com"))
+
+    assert CliRunner().invoke(cli, ["cart"]).output.strip() == "Your cart is empty."
+    assert json.loads(CliRunner().invoke(cli, ["cart", "--json"]).output)["count"] == 0

@@ -281,3 +281,31 @@ def parse_account_profile(html: str) -> dict:
         "date_of_birth": _text(soup.select_one("#account-dob")),
         "email": _text(soup.select_one("#account-email")),
     }
+
+
+def parse_cart(html: str, base_url: str) -> dict:
+    """Parse the quick-cart dropdown (/cart-load-quick); prices are per unit."""
+    soup = BeautifulSoup(html, "html.parser")
+    items = []
+    for card in soup.select("ul.product-section li.product-card"):
+        link = card.select_one(".product-details a[href]")
+        if not link:
+            continue
+        match = re.search(r"/product/(\d+)", str(link["href"]))
+        quantity = re.search(r"\d+", _text(card.select_one(".cart-qty")))
+        product_id = match.group(1) if match else ""
+        items.append({
+            "product_id": product_id,
+            "title": _text(link),
+            "quantity": int(quantity.group()) if quantity else 1,
+            "unit_price": _money(_text(card.select_one(".price"))),
+            "product_url": urljoin(base_url, f"/product/{product_id}") if product_id else "",
+        })
+    count = re.search(r"\d+", _text(soup.select_one("#cart-drop-count")))
+    return {
+        "items": items,
+        "count": int(count.group()) if count else sum(item["quantity"] for item in items),
+        "total": _money(_text(soup.select_one("#cart-total"))) or 0.0,
+        "free_shipping_remaining": _money(_text(soup.select_one("#ct-progress-count"))),
+        "currency": "USD",
+    }
