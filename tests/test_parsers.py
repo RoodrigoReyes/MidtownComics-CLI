@@ -362,7 +362,7 @@ def test_orders_stats_by_month_groups_spend_chronologically(monkeypatch):
         ],
     )
 
-    result = CliRunner().invoke(cli, ["--json", "orders", "stats", "--by", "month"])
+    result = CliRunner().invoke(cli, ["--json", "orders", "stats", "--by-month"])
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.output) == [
@@ -820,7 +820,7 @@ def test_help_command_shows_root_and_nested_help():
     nested = CliRunner().invoke(cli, ["help", "orders", "stats"], prog_name="midtown")
     assert nested.exit_code == 0, nested.output
     assert nested.output.startswith("Usage: midtown orders stats [OPTIONS]")
-    assert "--by [month]" in nested.output
+    assert "--by-month" in nested.output
 
     unknown = CliRunner().invoke(cli, ["help", "orders", "nope"])
     assert unknown.exit_code != 0
@@ -855,3 +855,81 @@ def test_comics_says_when_there_are_none(monkeypatch):
     _fake_client(monkeypatch, orders=[])
 
     assert CliRunner().invoke(cli, ["comics"]).output.strip() == "No comics yet."
+
+
+PERIOD_ORDERS = [
+    {"order_number": "3", "date": "10/1/2026", "status": "Shipped", "total": 19.43, "items": [
+        {"product_id": "30", "title": "Hulk #1", "quantity": 2, "unit_price": 4.00, "status": "Shipped"}]},
+    {"order_number": "2", "date": "9/30/2026", "status": "In Process", "total": 11.98, "items": [
+        {"product_id": "20", "title": "Thor #1", "quantity": 1, "unit_price": 5.99, "status": "Pending"}]},
+    {"order_number": "1", "date": "9/20/2026", "status": "Shipped", "total": 10.47, "items": [
+        {"product_id": "10", "title": "Batman #1", "quantity": 3, "unit_price": 2.99, "status": "Shipped"}]},
+]
+
+
+def test_orders_by_month_works_on_list_and_stats(monkeypatch):
+    import json
+
+    _fake_client(monkeypatch, orders=PERIOD_ORDERS)
+    expected = [
+        {"month": "2026-09", "orders": 2, "comics": 4, "total": 22.45},
+        {"month": "2026-10", "orders": 1, "comics": 2, "total": 19.43},
+    ]
+
+    for args in (["orders", "--by-month", "--json"], ["orders", "stats", "--by-month", "--json"]):
+        result = CliRunner().invoke(cli, args)
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output) == expected
+
+
+def test_comics_by_month_summarises_items(monkeypatch):
+    import json
+
+    _fake_client(monkeypatch, orders=PERIOD_ORDERS)
+
+    result = CliRunner().invoke(cli, ["comics", "--by-month", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == [
+        {"month": "2026-09", "comics": 4, "distinct": 2, "subtotal": 14.96},
+        {"month": "2026-10", "comics": 2, "distinct": 1, "subtotal": 8.0},
+    ]
+    text = CliRunner().invoke(cli, ["comics", "--by-month"]).output.splitlines()
+    assert text[0].split() == ["MONTH", "COMICS", "DISTINCT", "SUBTOTAL"]
+
+
+def test_date_range_filters_orders_stats_and_comics_inclusively(monkeypatch):
+    import json
+
+    _fake_client(monkeypatch, orders=PERIOD_ORDERS)
+    period = ["--from", "2026-09-30", "--to", "2026-10-01", "--json"]
+
+    listed = json.loads(CliRunner().invoke(cli, ["orders", *period]).output)
+    assert [order["order_number"] for order in listed] == ["3", "2"]
+
+    stats = json.loads(CliRunner().invoke(cli, ["orders", "stats", *period]).output)
+    assert (stats["orders"], stats["total_spent"]) == (2, 31.41)
+
+    comics = json.loads(CliRunner().invoke(cli, ["comics", "--from", "2026-10-01", "--json"]).output)
+    assert [item["title"] for item in comics] == ["Hulk #1"]
+
+    before = json.loads(CliRunner().invoke(cli, ["comics", "--to", "2026-09-20", "--json"]).output)
+    assert [item["title"] for item in before] == ["Batman #1"]
+
+    monthly = json.loads(CliRunner().invoke(cli, ["orders", "--by-month", "--from", "2026-09-25", "--json"]).output)
+    assert monthly == [
+        {"month": "2026-09", "orders": 1, "comics": 1, "total": 11.98},
+        {"month": "2026-10", "orders": 1, "comics": 2, "total": 19.43},
+    ]
+
+
+def test_date_range_rejects_bad_input(monkeypatch):
+    _fake_client(monkeypatch, orders=PERIOD_ORDERS)
+
+    bad_format = CliRunner().invoke(cli, ["orders", "--from", "30/09/2026"])
+    assert bad_format.exit_code != 0
+    assert "YYYY-MM-DD" in bad_format.output
+
+    reversed_range = CliRunner().invoke(cli, ["comics", "--from", "2026-10-01", "--to", "2026-09-01"])
+    assert reversed_range.exit_code != 0
+    assert "--from must be on or before --to" in reversed_range.output

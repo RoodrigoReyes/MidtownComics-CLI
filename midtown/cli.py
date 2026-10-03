@@ -6,7 +6,7 @@ import csv
 import json
 import shutil
 from collections.abc import Callable
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from io import StringIO
 from pathlib import Path
@@ -30,6 +30,47 @@ def _set_json(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
 json_option = click.option(
     "--json", is_flag=True, expose_value=False, callback=_set_json, help="Output machine-readable JSON."
 )
+
+
+def _store(key: str):
+    """Option callback that stores the value in ctx.obj, so it works on a group or its subcommands."""
+
+    def callback(ctx: click.Context, _param: click.Parameter, value: object) -> None:
+        if value not in (None, False):
+            ctx.ensure_object(dict)[key] = value
+
+    return callback
+
+
+class IsoDate(click.ParamType):
+    name = "YYYY-MM-DD"
+
+    def convert(self, value, param, ctx) -> date:
+        if isinstance(value, date):
+            return value
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()  # noqa: DTZ007 - date only
+        except ValueError:
+            self.fail(f"{value!r} is not a date in YYYY-MM-DD format.", param, ctx)
+
+
+period_options = [
+    click.option("--by-month", is_flag=True, expose_value=False, callback=_store("by_month"),
+                 help="Show totals per month."),
+    click.option("--from", "date_from", type=IsoDate(), expose_value=False, callback=_store("date_from"),
+                 help="Only orders placed on or after this date."),
+    click.option("--to", "date_to", type=IsoDate(), expose_value=False, callback=_store("date_to"),
+                 help="Only orders placed on or before this date."),
+]
+
+
+def _with_options(options: list):
+    def decorate(command):
+        for option in reversed(options):
+            command = option(command)
+        return command
+
+    return decorate
 
 
 def _wants_json(ctx: click.Context) -> bool:
@@ -142,10 +183,7 @@ export_options = [
 ]
 
 
-def _with_export_options(command):
-    for option in reversed(export_options):
-        command = option(command)
-    return command
+_with_export_options = _with_options(export_options)
 
 
 @click.group()
@@ -163,7 +201,8 @@ def cli(ctx: click.Context) -> None:
     Examples:
       midtown orders
       midtown comics
-      midtown orders stats --by month
+      midtown orders stats --by-month
+      midtown comics --from 2026-09-01 --to 2026-09-30
       midtown preorders
       midtown search "absolute batman" --preorders --out-of-stock
       midtown wishlist --json
@@ -272,12 +311,21 @@ ITEM_COLUMNS: list[Column] = [
 
 
 @cli.group(invoke_without_command=True)
+@_with_options(period_options)
 @json_option
 @click.pass_context
 def orders(ctx: click.Context) -> None:
-    """List your orders (date, number, status, comics, total)."""
-    if ctx.invoked_subcommand is None:
-        output(ctx, _client_call("orders"), ORDER_COLUMNS, empty="No orders yet.")
+    """List your orders (date, number, status, comics, total).
+
+    Filter with --from/--to (YYYY-MM-DD) or summarise with --by-month.
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+    result = _orders_in_period(ctx)
+    if _option(ctx, "by_month"):
+        _output_orders_by_month(ctx, result)
+    else:
+        output(ctx, result, ORDER_COLUMNS, empty=_empty("No orders", ctx))
 
 
 @orders.command("show")
@@ -311,29 +359,61 @@ def _order_date(order: dict) -> datetime | None:
 
 
 def _order_month(order: dict) -> str:
-    date = _order_date(order)
-    return date.strftime("%Y-%m") if date else "unknown"
+    placed = _order_date(order)
+    return placed.strftime("%Y-%m") if placed else "unknown"
+
+
+def _option(ctx: click.Context, key: str):
+    return (ctx.obj or {}).get(key)
+
+
+def _empty(subject: str, ctx: click.Context) -> str:
+    filtered = _option(ctx, "date_from") or _option(ctx, "date_to")
+    return f"{subject} in that date range." if filtered else f"{subject} yet."
+
+
+def _orders_in_period(ctx: click.Context) -> list[dict]:
+    """Fetch orders and keep those placed between --from and --to (inclusive)."""
+    start, end = _option(ctx, "date_from"), _option(ctx, "date_to")
+    if start and end and start > end:
+        raise click.UsageError("--from must be on or before --to.")
+    if not (start or end):
+        return _client_call("orders")
+
+    def in_period(order: dict) -> bool:
+        placed = _order_date(order)
+        return placed is not None and (not start or placed.date() >= start) and (not end or placed.date() <= end)
+
+    return [order for order in _client_call("orders") if in_period(order)]
+
+
+def _by_month(orders_result: list[dict]) -> list[tuple[str, list[dict]]]:
+    months = sorted({_order_month(order) for order in orders_result})
+    return [(month, [order for order in orders_result if _order_month(order) == month]) for month in months]
+
+
+def _output_orders_by_month(ctx: click.Context, orders_result: list[dict]) -> None:
+    rows = [{"month": month, **_order_totals(group)} for month, group in _by_month(orders_result)]
+    output(ctx, rows, [
+        ("MONTH", lambda row: row["month"], "<"),
+        ("ORDERS", lambda row: row["orders"], ">"),
+        ("COMICS", lambda row: row["comics"], ">"),
+        ("TOTAL", lambda row: row["total"], ">"),
+    ], empty=_empty("No orders", ctx))
 
 
 @orders.command("stats")
-@click.option("--by", "group_by", type=click.Choice(["month"]), help="Show totals per month instead.")
+@_with_options(period_options)
 @json_option
 @click.pass_context
-def orders_stats(ctx: click.Context, group_by: str | None) -> None:
-    """Show how much you have spent, by order status or --by month."""
-    result = _client_call("orders")
-    if group_by == "month":
-        months = sorted({_order_month(order) for order in result})
-        rows = [
-            {"month": month, **_order_totals([order for order in result if _order_month(order) == month])}
-            for month in months
-        ]
-        output(ctx, rows, [
-            ("MONTH", lambda row: row["month"], "<"),
-            ("ORDERS", lambda row: row["orders"], ">"),
-            ("COMICS", lambda row: row["comics"], ">"),
-            ("TOTAL", lambda row: row["total"], ">"),
-        ], empty="No orders yet.")
+def orders_stats(ctx: click.Context) -> None:
+    """Show how much you have spent, by order status or --by-month.
+
+    Filter with --from/--to (YYYY-MM-DD).
+    """
+    result = _orders_in_period(ctx)
+    if _option(ctx, "by_month"):
+        _output_orders_by_month(ctx, result)
         return
     totals = _order_totals(result)
     products = {item.get("product_id") for order in result for item in order.get("items", []) if item.get("product_id")}
@@ -377,19 +457,49 @@ def orders_export(format_name: str, output_path: str) -> None:
     _write_export(_client_call("orders"), output_path, format_name)
 
 
-@cli.command()
-@json_option
-@click.pass_context
-def comics(ctx: click.Context) -> None:
-    """List every comic you have bought, newest first."""
-    ordered = sorted(_client_call("orders"), key=lambda order: _order_date(order) or datetime.min, reverse=True)
-    items = [
+def _comic_items(orders_result: list[dict]) -> list[dict]:
+    ordered = sorted(orders_result, key=lambda order: _order_date(order) or datetime.min, reverse=True)  # noqa: DTZ901
+    return [
         {"order_number": order.get("order_number", ""), "order_date": order.get("date", ""), **item}
         for order in ordered
         for item in order.get("items", [])
     ]
-    quantity = sum(item.get("quantity", 1) for item in items)
-    distinct = len({item.get("product_id") or item.get("title") for item in items})
+
+
+def _comics_summary(items: list[dict]) -> dict:
+    subtotal = sum(
+        (Decimal(str(item["unit_price"])) * item.get("quantity", 1) for item in items if item.get("unit_price") is not None),
+        Decimal(0),
+    )
+    return {
+        "comics": sum(item.get("quantity", 1) for item in items),
+        "distinct": len({item.get("product_id") or item.get("title") for item in items}),
+        "subtotal": float(subtotal),
+    }
+
+
+@cli.command()
+@_with_options(period_options)
+@json_option
+@click.pass_context
+def comics(ctx: click.Context) -> None:
+    """List every comic you have bought, newest first.
+
+    Filter with --from/--to (YYYY-MM-DD) or summarise with --by-month
+    (SUBTOTAL is the sum of comic prices, without shipping or tax).
+    """
+    result = _orders_in_period(ctx)
+    if _option(ctx, "by_month"):
+        rows = [{"month": month, **_comics_summary(_comic_items(group))} for month, group in _by_month(result)]
+        output(ctx, rows, [
+            ("MONTH", lambda row: row["month"], "<"),
+            ("COMICS", lambda row: row["comics"], ">"),
+            ("DISTINCT", lambda row: row["distinct"], ">"),
+            ("SUBTOTAL", lambda row: row["subtotal"], ">"),
+        ], empty=_empty("No comics", ctx))
+        return
+    items = _comic_items(result)
+    summary = _comics_summary(items)
     output(ctx, items, [
         ("DATE", lambda item: item["order_date"], "<"),
         ("QTY", lambda item: item.get("quantity", 1), ">"),
@@ -397,7 +507,7 @@ def comics(ctx: click.Context) -> None:
         ("PRICE", lambda item: item.get("unit_price"), ">"),
         ("STATUS", lambda item: item.get("status"), "<"),
         ("ORDER", lambda item: item["order_number"], "<"),
-    ], empty="No comics yet.", footer=f"Total: {quantity} comics · {distinct} distinct")
+    ], empty=_empty("No comics", ctx), footer=f"Total: {summary['comics']} comics · {summary['distinct']} distinct")
 
 
 # ---------------------------------------------------------------- preorders, wishlist, account
