@@ -34,10 +34,11 @@ midtown
 │   └── export              save as JSON or CSV
 ├── search <text>           catalog search [--preorders] [--out-of-stock]
 ├── account                 your profile: name, date of birth, email
-└── auth                    login [--remote] | logout | status
+├── auth                    login [--remote] | logout | status
+└── help [command]          help for midtown or any command
 ```
 
-Add `--json` to any command (before or after it) for JSON output with every field.
+Run `midtown help` for the overview and `midtown help <command>` for details (e.g. `midtown help orders stats`). Add `--json` to any command (before or after it) for JSON output with every field.
 
 ```bash
 midtown orders
