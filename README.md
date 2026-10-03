@@ -29,6 +29,7 @@ midtown
 │   ├── stats [--by month]  spending by order status, or per month
 │   ├── duplicates          comics bought in more than one order
 │   └── export              save as JSON or CSV
+├── comics                  every comic you bought, newest first, with a total
 ├── preorders               pre-ordered comics not released yet, with a total
 ├── wishlist                wishlist with current prices
 │   └── export              save as JSON or CSV
@@ -43,6 +44,7 @@ Run `midtown help` for the overview and `midtown help <command>` for details (e.
 ```bash
 midtown orders
 midtown orders show 4349113
+midtown comics
 midtown orders stats --by month
 midtown orders export --format csv -o orders.csv
 midtown preorders

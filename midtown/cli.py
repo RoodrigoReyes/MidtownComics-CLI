@@ -162,6 +162,7 @@ def cli(ctx: click.Context) -> None:
     \b
     Examples:
       midtown orders
+      midtown comics
       midtown orders stats --by month
       midtown preorders
       midtown search "absolute batman" --preorders --out-of-stock
@@ -302,11 +303,16 @@ def _order_totals(orders_result: list[dict]) -> dict:
     return {"orders": len(orders_result), "comics": sum(map(_comics, orders_result)), "total": float(total)}
 
 
-def _order_month(order: dict) -> str:
+def _order_date(order: dict) -> datetime | None:
     try:
-        return datetime.strptime(order.get("date", ""), "%m/%d/%Y").strftime("%Y-%m")  # noqa: DTZ007 - date only
+        return datetime.strptime(order.get("date", ""), "%m/%d/%Y")  # noqa: DTZ007 - date only
     except ValueError:
-        return "unknown"
+        return None
+
+
+def _order_month(order: dict) -> str:
+    date = _order_date(order)
+    return date.strftime("%Y-%m") if date else "unknown"
 
 
 @orders.command("stats")
@@ -369,6 +375,29 @@ def orders_duplicates(ctx: click.Context) -> None:
 def orders_export(format_name: str, output_path: str) -> None:
     """Save your orders to a JSON or CSV file: -o orders.csv --format csv"""
     _write_export(_client_call("orders"), output_path, format_name)
+
+
+@cli.command()
+@json_option
+@click.pass_context
+def comics(ctx: click.Context) -> None:
+    """List every comic you have bought, newest first."""
+    ordered = sorted(_client_call("orders"), key=lambda order: _order_date(order) or datetime.min, reverse=True)
+    items = [
+        {"order_number": order.get("order_number", ""), "order_date": order.get("date", ""), **item}
+        for order in ordered
+        for item in order.get("items", [])
+    ]
+    quantity = sum(item.get("quantity", 1) for item in items)
+    distinct = len({item.get("product_id") or item.get("title") for item in items})
+    output(ctx, items, [
+        ("DATE", lambda item: item["order_date"], "<"),
+        ("QTY", lambda item: item.get("quantity", 1), ">"),
+        ("TITLE", lambda item: item.get("title"), "<"),
+        ("PRICE", lambda item: item.get("unit_price"), ">"),
+        ("STATUS", lambda item: item.get("status"), "<"),
+        ("ORDER", lambda item: item["order_number"], "<"),
+    ], empty="No comics yet.", footer=f"Total: {quantity} comics · {distinct} distinct")
 
 
 # ---------------------------------------------------------------- preorders, wishlist, account
