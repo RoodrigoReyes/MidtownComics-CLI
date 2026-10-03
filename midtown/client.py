@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 
 from .credentials import load_session_cookies, save_session
 from .parsers import (
+    parse_account_profile,
     parse_order_detail,
     parse_orders,
     parse_preview_items,
@@ -108,6 +109,9 @@ class MidtownClient:
         result = parse_wishlist(response.text, self.base_url)
         self._save_cookies()
         return result
+
+    def account(self) -> dict:
+        return parse_account_profile(self._post_authenticated("/acs-contents").text)
 
     def preorders(self) -> list[dict]:
         """Items not yet released: pending items of regular orders plus Previews pre-orders."""

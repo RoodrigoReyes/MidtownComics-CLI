@@ -76,19 +76,35 @@ def _write_export(value, output: str, format_name: str) -> None:
 @click.option("--json", "as_json", is_flag=True, help="Output machine-readable JSON.")
 @click.pass_context
 def cli(ctx: click.Context, as_json: bool) -> None:
-    """Headless CLI for Midtown Comics."""
+    """Headless CLI for your Midtown Comics account.
+
+    Credentials are read from .env at the project root (MIDTOWN_EMAIL,
+    MIDTOWN_PASSWORD). Commands that need your account log in automatically
+    with headless Chromium when the saved session is missing or expired.
+
+    \b
+    Examples:
+      midtown orders stats --by month
+      midtown preorders list
+      midtown --json wishlist list
+      midtown search "absolute batman" --include-preorders --show-out-of-stock
+    """
     ctx.ensure_object(dict)
     ctx.obj["json"] = as_json
 
 
 @cli.group()
 def auth() -> None:
-    """Manage the Midtown Comics HTTP session."""
+    """Log in, log out and inspect credentials/session files."""
 
 
 @auth.command("configure")
 def auth_configure() -> None:
-    """Save Midtown Comics credentials in the local config directory."""
+    """Save credentials to ~/.config/midtown-comics/credentials.
+
+    Used only when .env and the MIDTOWN_EMAIL/MIDTOWN_PASSWORD environment
+    variables are not set.
+    """
     from .credentials import save_credentials
 
     email = click.prompt("Email")
@@ -99,7 +115,11 @@ def auth_configure() -> None:
 
 @auth.command("login")
 def auth_login() -> None:
-    """Log in with the stored credentials using headless Chromium."""
+    """Log in now with the stored credentials (headless Chromium).
+
+    Normally not needed: account commands log in automatically when the
+    session expires.
+    """
     try:
         MidtownClient().login()
     except Exception as exc:
@@ -111,7 +131,11 @@ def auth_login() -> None:
 @click.option("--auto/--remote", "use_auto", default=True, show_default=True, help="Try local credentials first, then fall back to the remote browser link.")
 @click.option("--timeout", type=click.IntRange(min=60, max=3600), default=900, show_default=True)
 def auth_browser_login(use_auto: bool, timeout: int) -> None:
-    """Authenticate automatically, with a remote-browser fallback."""
+    """Log in automatically, or through a remote browser.
+
+    If the automated login fails, prints a temporary noVNC/ngrok URL where you
+    complete the Midtown login manually (needs Xvfb, x11vnc, novnc, ngrok).
+    """
     from .remote_auth import run_browser_login
 
     try:
@@ -132,7 +156,7 @@ def auth_logout() -> None:
 @auth.command("status")
 @click.pass_context
 def auth_status(ctx: click.Context) -> None:
-    """Show local credential and session file status."""
+    """Show which credential, cookie and session files exist."""
     from .credentials import COOKIES_FILE, CREDENTIALS_FILE, ENV_FILE, SESSION_FILE
     from .remote_auth import PROFILE_DIR
 
@@ -204,7 +228,10 @@ def _order_month(order: dict) -> str:
 @click.option("--by", "group_by", type=click.Choice(["month"]), help="Break spending down by month.")
 @click.pass_context
 def orders_stats(ctx: click.Context, group_by: str | None) -> None:
-    """Show order count, comic quantity, and total spent (by status, or --by month)."""
+    """Show total spent, orders and comics, by status.
+
+    With --by month, show the same totals for each month.
+    """
     result = _client_data("orders")
     if group_by == "month":
         months = sorted({_order_month(order) for order in result})
@@ -267,7 +294,7 @@ def wishlist_export(format_name: str, output: str) -> None:
 @wishlist.command("add")
 @click.argument("product_id")
 def wishlist_add(product_id: str) -> None:
-    """Add a product to the wishlist."""
+    """[not implemented] Add a product to the wishlist."""
     del product_id
     _unsupported("Wishlist additions")
 
@@ -275,7 +302,7 @@ def wishlist_add(product_id: str) -> None:
 @wishlist.command("remove")
 @click.argument("product_id")
 def wishlist_remove(product_id: str) -> None:
-    """Remove a product from the wishlist."""
+    """[not implemented] Remove a product from the wishlist."""
     del product_id
     _unsupported("Wishlist removals")
 
@@ -283,20 +310,20 @@ def wishlist_remove(product_id: str) -> None:
 @wishlist.command("prices")
 @click.pass_context
 def wishlist_prices(ctx: click.Context) -> None:
-    """Show current prices for wishlist products."""
+    """Show current prices for wishlist products (same as list)."""
     _wishlist_list(ctx)
 
 
 @wishlist.command("price-drops")
 def wishlist_price_drops() -> None:
-    """Show wishlist products whose price dropped."""
+    """[not implemented] Show wishlist products whose price dropped."""
     _unsupported("Wishlist price history")
 
 
 @cli.group(invoke_without_command=True)
 @click.pass_context
 def preorders(ctx: click.Context) -> None:
-    """List pre-ordered items that have not been released yet."""
+    """Pre-ordered items not released yet."""
     if ctx.invoked_subcommand is None:
         emit(_client_data("preorders"), ctx.obj["json"])
 
@@ -304,14 +331,17 @@ def preorders(ctx: click.Context) -> None:
 @preorders.command("list")
 @click.pass_context
 def preorders_list(ctx: click.Context) -> None:
-    """List pending pre-ordered items with their release dates."""
+    """List pending pre-orders with release dates.
+
+    Includes pending items of regular orders and Midtown Previews pre-orders.
+    """
     emit(_client_data("preorders"), ctx.obj["json"])
 
 
 @preorders.command("total")
 @click.pass_context
 def preorders_total(ctx: click.Context) -> None:
-    """Show how many pre-ordered items are pending and their combined price."""
+    """Show pending pre-order count and their combined price."""
     items = _client_data("preorders")
     total = sum(
         (Decimal(str(item["unit_price"])) * item.get("quantity", 1) for item in items if item.get("unit_price") is not None),
@@ -326,9 +356,10 @@ def account() -> None:
 
 
 @account.command("show")
-def account_show() -> None:
-    """Show the authenticated account profile."""
-    _unsupported("Account profile lookup")
+@click.pass_context
+def account_show(ctx: click.Context) -> None:
+    """Show your profile: name, date of birth and email."""
+    emit(_client_data("account"), ctx.obj["json"])
 
 
 @cli.group()
@@ -339,20 +370,31 @@ def product() -> None:
 @product.command("show")
 @click.argument("product_id")
 def product_show(product_id: str) -> None:
-    """Show one catalog product."""
+    """[not implemented] Show one catalog product."""
     del product_id
     _unsupported("Product lookup")
 
 
 @cli.command("search")
 @click.argument("query")
-@click.option("--per-page", type=click.IntRange(min=1, max=100), default=100, show_default=True)
-@click.option("--page", type=click.IntRange(min=1), default=1, show_default=True)
-@click.option("--include-preorders/--exclude-preorders", default=False, show_default=True, help="Include items not released yet.")
-@click.option("--show-out-of-stock/--hide-out-of-stock", default=False, show_default=True, help="Include sold-out items.")
+@click.option("--per-page", type=click.IntRange(min=1, max=100), default=100, show_default=True, help="Results per page (fewer is faster).")
+@click.option("--page", type=click.IntRange(min=1), default=1, show_default=True, help="Results page number.")
+@click.option("--include-preorders/--exclude-preorders", default=False, show_default=True, help='Include items not released yet (site: "Include Pre-orders").')
+@click.option("--show-out-of-stock/--hide-out-of-stock", default=False, show_default=True, help='Include sold-out items (site: "Show out of stock").')
 @click.pass_context
 def search(ctx: click.Context, query: str, per_page: int, page: int, include_preorders: bool, show_out_of_stock: bool) -> None:
-    """Search the Midtown Comics catalog."""
+    """Search the Midtown Comics catalog.
+
+    Results include price, release_date and availability (in stock,
+    pre-order, out of stock). Like the website, pre-orders and sold-out items
+    are hidden unless you enable their filters.
+
+    \b
+    Examples:
+      midtown search "spider-man"
+      midtown search "absolute batman" --include-preorders --show-out-of-stock
+      midtown --json search "x-men" --per-page 20 --page 2
+    """
     try:
         result = MidtownClient().search(query, per_page, page, include_preorders, show_out_of_stock)
     except Exception as exc:

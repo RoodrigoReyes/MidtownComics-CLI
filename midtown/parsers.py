@@ -271,3 +271,13 @@ def parse_preview_items(html: str, base_url: str) -> list[dict]:
                 }
             )
     return items
+
+
+def parse_account_profile(html: str) -> dict:
+    """Parse "My Profile" from account settings; the masked password is skipped."""
+    soup = BeautifulSoup(html, "html.parser")
+    return {
+        "name": _text(soup.select_one("#account-name")),
+        "date_of_birth": _text(soup.select_one("#account-dob")),
+        "email": _text(soup.select_one("#account-email")),
+    }

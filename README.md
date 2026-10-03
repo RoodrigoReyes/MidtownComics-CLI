@@ -59,7 +59,7 @@ The browser profile is retained at `~/.config/midtown-comics/browser-profile`; t
 
 `orders stats` calculates the number of orders, total comic units from order items, and total amount spent, broken down by order status; `--by month` groups spending per month. `collection stats` and `collection duplicates` use the order data already exposed by the authenticated account.
 
-Catalog and write operations (`account show`, `product show`, `wishlist add`, `wishlist remove`, and `wishlist price-drops`) are registered in the command tree but intentionally report that they are not implemented until their Midtown endpoints are verified. The CLI does not guess or bypass site protections.
+Catalog and write operations (`product show`, `wishlist add`, `wishlist remove`, and `wishlist price-drops`) are registered in the command tree but intentionally report that they are not implemented until their Midtown endpoints are verified. The CLI does not guess or bypass site protections.
 
 The CLI automatically loads cookies from `cookies.json` and any refreshed session from `session.json`. After a successful browser login, the complete Playwright cookie objects for `www.midtowncomics.com` are captured in `session.json`, preserving attributes such as domain, path, `secure`, `httpOnly`, and expiry. After a successful authenticated orders or wishlist request, the current HTTP cookie jar is also persisted there, so normal cookie rotation does not require importing cookies again. This does not bypass server-side session expiration or CAPTCHA; if Midtown invalidates the session, `midtown auth browser-login` must be run again.
 

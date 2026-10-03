@@ -691,3 +691,37 @@ def test_search_completes_lazy_loaded_cards_with_product_body(monkeypatch):
 
     assert calls == [("https://www.midtowncomics.com/search-load-product-body", {"pr_parentid": "77", "pr_id": "77"})]
     assert (product["price"], product["availability"]) == (4.95, "pre-order")
+
+
+def test_parse_account_profile_reads_fields_and_never_password():
+    from midtown.parsers import parse_account_profile
+
+    html = """<div class="account-details" id="act-profile"><table>
+        <tr><td><p>Name:</p></td><td><p><span id="account-name">Peter Parker</span></p></td></tr>
+        <tr><td><p>Date of Birth:</p></td><td><p><span id="account-dob">08/10/2001</span></p></td></tr>
+        <tr><td><p>E-mail:</p></td><td><p><span id="account-email">peter@example.com</span></p></td></tr>
+        <tr><td><p>Password:</p></td><td><p><span id="account-pass">**********</span></p></td></tr>
+    </table></div>"""
+
+    assert parse_account_profile(html) == {
+        "name": "Peter Parker",
+        "date_of_birth": "08/10/2001",
+        "email": "peter@example.com",
+    }
+
+
+def test_account_show_cli_uses_authenticated_settings_endpoint(monkeypatch):
+    import json
+
+    import midtown.cli as cli_module
+
+    monkeypatch.setattr(
+        cli_module.MidtownClient,
+        "account",
+        lambda self: {"name": "Peter Parker", "date_of_birth": "08/10/2001", "email": "peter@example.com"},
+    )
+
+    result = CliRunner().invoke(cli, ["--json", "account", "show"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["email"] == "peter@example.com"
