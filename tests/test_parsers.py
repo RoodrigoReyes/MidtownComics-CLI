@@ -825,3 +825,33 @@ def test_help_command_shows_root_and_nested_help():
     unknown = CliRunner().invoke(cli, ["help", "orders", "nope"])
     assert unknown.exit_code != 0
     assert "No such command: orders nope" in unknown.output
+
+
+def test_comics_lists_every_purchased_comic_newest_first(monkeypatch):
+    import json
+
+    _fake_client(monkeypatch, orders=[
+        {"order_number": "1", "date": "9/20/2026", "items": [
+            {"product_id": "10", "title": "Batman #1", "quantity": 1, "unit_price": 3.99, "status": "Shipped"}]},
+        {"order_number": "2", "date": "10/1/2026", "items": [
+            {"product_id": "10", "title": "Batman #1", "quantity": 1, "unit_price": 3.99, "status": "Shipped"},
+            {"product_id": "11", "title": "Robin #1", "quantity": 2, "unit_price": 4.99, "status": "Pending"}]},
+    ])
+
+    text = CliRunner().invoke(cli, ["comics"])
+    assert text.exit_code == 0, text.output
+    lines = text.output.splitlines()
+    assert lines[0].split() == ["DATE", "QTY", "TITLE", "PRICE", "STATUS", "ORDER"]
+    assert lines[1].split()[:2] == ["10/1/2026", "1"]
+    assert lines[3].split()[0] == "9/20/2026"
+    assert lines[-1] == "Total: 4 comics · 2 distinct"
+
+    data = json.loads(CliRunner().invoke(cli, ["comics", "--json"]).output)
+    assert data[2] == {"order_number": "1", "order_date": "9/20/2026", "product_id": "10",
+                       "title": "Batman #1", "quantity": 1, "unit_price": 3.99, "status": "Shipped"}
+
+
+def test_comics_says_when_there_are_none(monkeypatch):
+    _fake_client(monkeypatch, orders=[])
+
+    assert CliRunner().invoke(cli, ["comics"]).output.strip() == "No comics yet."
