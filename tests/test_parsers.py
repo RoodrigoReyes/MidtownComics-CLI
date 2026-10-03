@@ -64,27 +64,6 @@ def test_parse_wishlist_extracts_product_cards():
     ]
 
 
-def test_auth_configure_writes_protected_credentials_file(tmp_path, monkeypatch):
-    from midtown import credentials
-
-    credentials_file = tmp_path / "credentials"
-    monkeypatch.setattr(credentials, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(credentials, "CREDENTIALS_FILE", credentials_file)
-
-    result = CliRunner().invoke(
-        cli,
-        ["auth", "configure"],
-        input="reader@example.com\ncorrect horse battery staple\ncorrect horse battery staple\n",
-    )
-
-    assert result.exit_code == 0, result.output
-    assert "Credentials saved" in result.output
-    assert credentials_file.read_text() == (
-        "MIDTOWN_EMAIL=reader@example.com\n"
-        "MIDTOWN_PASSWORD=correct horse battery staple\n"
-    )
-    assert oct(credentials_file.stat().st_mode & 0o777) == "0o600"
-
 
 def test_load_session_reads_browser_cookie_json_and_filters_domains(tmp_path, monkeypatch):
     import json
@@ -331,8 +310,11 @@ def test_cli_exposes_logical_command_groups():
     result = CliRunner().invoke(cli, ["--help"])
 
     assert result.exit_code == 0, result.output
-    for command in ("auth", "account", "orders", "wishlist", "product", "search", "collection", "doctor"):
-        assert command in result.output
+    commands = result.output.split("Commands:")[1].split()
+    for command in ("account", "auth", "orders", "preorders", "search", "wishlist"):
+        assert command in commands
+    for removed in ("collection", "doctor", "product"):
+        assert removed not in commands
 
 
 def test_orders_stats_reports_order_comic_and_spend_totals(monkeypatch):
@@ -347,7 +329,7 @@ def test_orders_stats_reports_order_comic_and_spend_totals(monkeypatch):
         ],
     )
 
-    result = CliRunner().invoke(cli, ["--json", "orders", "stats"])
+    result = CliRunner().invoke(cli, ["orders", "stats", "--json"])
 
     assert result.exit_code == 0, result.output
     import json
@@ -357,6 +339,7 @@ def test_orders_stats_reports_order_comic_and_spend_totals(monkeypatch):
         "comics": 6,
         "total_spent": 15.75,
         "currency": "USD",
+        "distinct_products": 0,
         "by_status": {
             "Shipped": {"orders": 1, "comics": 2, "total": 10.5},
             "In Process": {"orders": 1, "comics": 4, "total": 5.25},
@@ -469,19 +452,6 @@ def test_client_persists_cookie_objects_with_domain(monkeypatch, tmp_path):
     }]
 
 
-def test_browser_login_reports_automated_failure_before_remote_fallback(monkeypatch, capsys):
-    from midtown import remote_auth
-
-    def fail():
-        raise remote_auth.RemoteLoginError("Midtown rejected the stored email/password")
-
-    monkeypatch.setattr(remote_auth, "run_automated_login", fail)
-    monkeypatch.setattr(remote_auth, "run_remote_login", lambda timeout: None)
-
-    remote_auth.run_browser_login()
-
-    assert "Midtown rejected the stored email/password" in capsys.readouterr().err
-
 
 def test_parse_midtown_order_detail_items():
     html = """
@@ -510,19 +480,16 @@ def test_parse_midtown_order_detail_items():
     ]
 
 
-def test_read_credentials_from_env_file_before_config_file(tmp_path, monkeypatch):
+def test_read_credentials_from_env_file(tmp_path, monkeypatch):
     from midtown import credentials
 
     env_file = tmp_path / ".env"
     env_file.write_text('# Midtown\nMIDTOWN_EMAIL=reader@example.com\nMIDTOWN_PASSWORD="p@ss=word"\n')
-    config_file = tmp_path / "credentials"
-    config_file.write_text("MIDTOWN_EMAIL=old@example.com\nMIDTOWN_PASSWORD=old\n")
     monkeypatch.delenv("MIDTOWN_EMAIL", raising=False)
     monkeypatch.delenv("MIDTOWN_PASSWORD", raising=False)
     monkeypatch.setattr(credentials, "ENV_FILE", env_file)
-    monkeypatch.setattr(credentials, "CREDENTIALS_FILE", config_file)
 
-    assert credentials.read_credentials(interactive=False) == ("reader@example.com", "p@ss=word")
+    assert credentials.read_credentials() == ("reader@example.com", "p@ss=word")
 
 
 def test_parse_release_date_from_product_page():
@@ -594,24 +561,6 @@ def test_client_preorders_combines_pending_order_items_and_previews(monkeypatch)
         "product_url": "https://www.midtowncomics.com/product/10",
     }]
 
-
-def test_preorders_cli_lists_items_and_reports_total(monkeypatch):
-    import midtown.cli as cli_module
-
-    class Client:
-        def preorders(self):
-            return [
-                {"title": "A", "quantity": 2, "unit_price": 5.99, "release_date": "10/7/2026"},
-                {"title": "B", "quantity": 1, "unit_price": 3.99, "release_date": "10/14/2026"},
-            ]
-
-    monkeypatch.setattr(cli_module, "MidtownClient", Client)
-
-    result = CliRunner().invoke(cli, ["preorders", "total"])
-
-    assert result.exit_code == 0, result.output
-    assert "items: 3" in result.output
-    assert "total: 15.97" in result.output
 
 
 def test_parse_search_reports_availability_and_release_date():
@@ -721,7 +670,143 @@ def test_account_show_cli_uses_authenticated_settings_endpoint(monkeypatch):
         lambda self: {"name": "Peter Parker", "date_of_birth": "08/10/2001", "email": "peter@example.com"},
     )
 
-    result = CliRunner().invoke(cli, ["--json", "account", "show"])
+    result = CliRunner().invoke(cli, ["account", "--json"])
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["email"] == "peter@example.com"
+
+
+def _fake_client(monkeypatch, **methods):
+    import midtown.cli as cli_module
+
+    monkeypatch.setattr(cli_module, "MidtownClient", lambda: type("FakeClient", (), {
+        name: (lambda self, *args, _value=value, **kwargs: _value(*args, **kwargs) if callable(_value) else _value)
+        for name, value in methods.items()
+    })())
+
+
+def test_preorders_prints_table_with_total_footer(monkeypatch):
+    _fake_client(monkeypatch, preorders=[
+        {"title": "Midnight Spider-Man #1", "quantity": 2, "unit_price": 5.99, "release_date": "10/7/2026", "order_number": "4347877"},
+        {"title": "Midnight X-Men #1", "quantity": 1, "unit_price": 3.99, "release_date": "10/14/2026", "order_number": "4347877"},
+    ])
+
+    result = CliRunner().invoke(cli, ["preorders"])
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert lines[0].split() == ["RELEASE", "TITLE", "QTY", "PRICE", "ORDER"]
+    assert lines[1].split()[0] == "10/7/2026"
+    assert "Midnight Spider-Man #1" in lines[1]
+    assert lines[-1] == "Total: 3 items · $15.97"
+
+
+def test_list_commands_say_when_there_is_nothing(monkeypatch):
+    _fake_client(monkeypatch, preorders=[], wishlist=[], orders=[])
+
+    assert CliRunner().invoke(cli, ["preorders"]).output.strip() == "No pending pre-orders."
+    assert CliRunner().invoke(cli, ["wishlist"]).output.strip() == "Your wishlist is empty."
+    assert CliRunner().invoke(cli, ["orders", "duplicates"]).output.strip() == "No product was bought in more than one order."
+
+
+def test_orders_duplicates_counts_products_across_orders(monkeypatch):
+    import json
+
+    _fake_client(monkeypatch, orders=[
+        {"order_number": "1", "items": [{"product_id": "10", "title": "Batman #1", "quantity": 1}]},
+        {"order_number": "2", "items": [{"product_id": "10", "title": "Batman #1", "quantity": 2},
+                                         {"product_id": "11", "title": "Robin #1", "quantity": 1}]},
+    ])
+
+    result = CliRunner().invoke(cli, ["orders", "duplicates", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == [{"product_id": "10", "title": "Batman #1", "quantity": 3, "orders": 2}]
+
+
+def test_orders_show_fetches_only_the_requested_order(monkeypatch):
+    calls = []
+    order = {"order_number": "7", "date": "9/30/2026", "status": "In Process", "total": 5.99,
+             "items": [{"title": "Batman #1", "quantity": 1, "unit_price": 5.99, "status": "Pending"}]}
+    _fake_client(monkeypatch, order=lambda number: calls.append(number) or order)
+
+    result = CliRunner().invoke(cli, ["orders", "show", "7"])
+
+    assert result.exit_code == 0, result.output
+    assert calls == ["7"]
+    assert "Order 7 · 9/30/2026 · In Process · $5.99" in result.output
+    assert "Batman #1" in result.output
+
+
+def test_client_order_requests_detail_of_one_order(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    import midtown.client as client_module
+
+    client = client_module.MidtownClient.__new__(client_module.MidtownClient)
+    client.base_url = "https://www.midtowncomics.com"
+    posted = []
+    monkeypatch.setattr(client, "_post_authenticated", lambda path: SimpleNamespace(text="list"))
+    monkeypatch.setattr(client_module, "parse_orders", lambda html, base: [{"order_number": "1"}, {"order_number": "2"}])
+    monkeypatch.setattr(client, "_order_items", lambda number: posted.append(number) or [])
+    monkeypatch.setattr(client, "_save_cookies", lambda: None)
+
+    assert client.order("2") == {"order_number": "2", "items": []}
+    assert posted == ["2"]
+    import pytest
+
+    with pytest.raises(RuntimeError, match="Order not found: 9"):
+        client.order("9")
+
+
+def test_auth_logout_removes_session_and_browser_profile(tmp_path, monkeypatch):
+    from midtown import credentials, remote_auth
+
+    session = tmp_path / "session.json"
+    session.write_text("{}")
+    profile = tmp_path / "browser-profile"
+    (profile / "Default").mkdir(parents=True)
+    monkeypatch.setattr(credentials, "SESSION_FILE", session)
+    monkeypatch.setattr(remote_auth, "PROFILE_DIR", profile)
+
+    result = CliRunner().invoke(cli, ["auth", "logout"])
+
+    assert result.exit_code == 0, result.output
+    assert not session.exists()
+    assert not profile.exists()
+
+
+def test_auth_login_remote_uses_remote_browser(monkeypatch):
+    from midtown import remote_auth
+
+    calls = []
+    monkeypatch.setattr(remote_auth, "run_remote_login", lambda timeout: calls.append(timeout))
+
+    result = CliRunner().invoke(cli, ["auth", "login", "--remote"])
+
+    assert result.exit_code == 0, result.output
+    assert calls == [900]
+
+
+def test_search_short_filter_flags(monkeypatch):
+    calls = []
+    _fake_client(monkeypatch, search=lambda *args: calls.append(args) or [])
+
+    result = CliRunner().invoke(cli, ["search", "batman", "--preorders", "--out-of-stock"])
+
+    assert result.exit_code == 0, result.output
+    assert calls == [("batman", 100, 1, True, True)]
+    assert result.output.strip() == "No results."
+
+
+def test_client_warns_before_automatic_login(monkeypatch, tmp_path, caplog):
+    from types import SimpleNamespace
+
+    login_page = SimpleNamespace(url="https://www.midtowncomics.com/login", text='<input name="txtPassword">')
+    orders_page = SimpleNamespace(url="https://www.midtowncomics.com/ord-contents", text="<table></table>")
+    client, _ = _client_with_responses(monkeypatch, tmp_path, [login_page, orders_page])
+    monkeypatch.setattr(client, "login", lambda: None)
+
+    client.orders()
+
+    assert "Logging in to Midtown" in caplog.text

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urljoin
 
@@ -21,6 +22,7 @@ from .parsers import (
 )
 
 BASE_URL = "https://www.midtowncomics.com"
+logger = logging.getLogger(__name__)
 
 
 class MidtownClient:
@@ -83,6 +85,7 @@ class MidtownClient:
         response = self.session.post(url, timeout=30)
         response.raise_for_status()
         if self._is_login_response(response):
+            logger.warning("Logging in to Midtown (session missing or expired)...")
             self.login()
             response = self.session.post(url, timeout=30)
             response.raise_for_status()
@@ -91,18 +94,36 @@ class MidtownClient:
 
     def orders(self) -> list[dict]:
         response = self._post_authenticated("/ord-contents")
-        orders = parse_orders(response.text, self.base_url)
-        for order in orders:
-            detail = self.session.post(
-                urljoin(self.base_url, "/ord-info"),
-                data={"od_id": order["order_number"], "is_archived": "0"},
-                timeout=30,
-            )
-            detail.raise_for_status()
-            if not self._looks_like_login(detail.text):
-                order["items"] = parse_order_detail(detail.text, self.base_url)
+        orders = [
+            {**order, "items": self._order_items(order["order_number"])}
+            for order in parse_orders(response.text, self.base_url)
+        ]
         self._save_cookies()
         return orders
+
+    def order(self, order_number: str) -> dict:
+        """One order with its items, without downloading every order's detail."""
+        response = self._post_authenticated("/ord-contents")
+        summary = next(
+            (order for order in parse_orders(response.text, self.base_url) if str(order["order_number"]) == order_number),
+            None,
+        )
+        if summary is None:
+            raise RuntimeError(f"Order not found: {order_number}")
+        result = {**summary, "items": self._order_items(order_number)}
+        self._save_cookies()
+        return result
+
+    def _order_items(self, order_number: str) -> list[dict]:
+        detail = self.session.post(
+            urljoin(self.base_url, "/ord-info"),
+            data={"od_id": order_number, "is_archived": "0"},
+            timeout=30,
+        )
+        detail.raise_for_status()
+        if self._looks_like_login(detail.text):
+            return []
+        return parse_order_detail(detail.text, self.base_url)
 
     def wishlist(self) -> list[dict]:
         response = self._post_authenticated("/wsh-contents")
@@ -177,5 +198,5 @@ class MidtownClient:
         if self._is_login_response(response):
             raise RuntimeError(
                 "Midtown session is not authenticated even after logging in with the stored "
-                "credentials; run `midtown auth browser-login --remote` to log in manually"
+                "credentials; run `midtown auth login --remote` to log in manually"
             )

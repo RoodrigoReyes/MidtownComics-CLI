@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import getpass
 import json
 import os
 from pathlib import Path
 
 CONFIG_DIR = Path(os.environ.get("MIDTOWN_CONFIG_DIR", Path.home() / ".config" / "midtown-comics"))
-CREDENTIALS_FILE = CONFIG_DIR / "credentials"
 COOKIES_FILE = CONFIG_DIR / "cookies.json"
 SESSION_FILE = CONFIG_DIR / "session.json"
 # ponytail: .env at the project root (editable install); MIDTOWN_ENV_FILE overrides it.
@@ -27,28 +25,17 @@ def _read_key_values(path: Path) -> dict[str, str]:
     return values
 
 
-def read_credentials(interactive: bool = True) -> tuple[str, str]:
+def read_credentials() -> tuple[str, str]:
+    """Read credentials from MIDTOWN_EMAIL/MIDTOWN_PASSWORD, then from .env."""
     email = os.getenv("MIDTOWN_EMAIL")
     password = os.getenv("MIDTOWN_PASSWORD")
     if email and password:
         return email, password
-    for path in (ENV_FILE, CREDENTIALS_FILE):
-        if path.exists():
-            values = _read_key_values(path)
-            if values.get("MIDTOWN_EMAIL") and values.get("MIDTOWN_PASSWORD"):
-                return values["MIDTOWN_EMAIL"], values["MIDTOWN_PASSWORD"]
-    if interactive:
-        return input("Email: ").strip(), getpass.getpass("Password: ")
+    if ENV_FILE.exists():
+        values = _read_key_values(ENV_FILE)
+        if values.get("MIDTOWN_EMAIL") and values.get("MIDTOWN_PASSWORD"):
+            return values["MIDTOWN_EMAIL"], values["MIDTOWN_PASSWORD"]
     raise RuntimeError(f"Midtown credentials not found; set MIDTOWN_EMAIL and MIDTOWN_PASSWORD in {ENV_FILE}")
-
-
-def save_credentials(email: str, password: str) -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CREDENTIALS_FILE.write_text(
-        f"MIDTOWN_EMAIL={email}\nMIDTOWN_PASSWORD={password}\n",
-        encoding="utf-8",
-    )
-    CREDENTIALS_FILE.chmod(0o600)
 
 
 def save_session(cookies: dict | list[dict]) -> None:
