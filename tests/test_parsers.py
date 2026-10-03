@@ -810,3 +810,18 @@ def test_client_warns_before_automatic_login(monkeypatch, tmp_path, caplog):
     client.orders()
 
     assert "Logging in to Midtown" in caplog.text
+
+
+def test_help_command_shows_root_and_nested_help():
+    root = CliRunner().invoke(cli, ["help"])
+    assert root.exit_code == 0, root.output
+    assert root.output == CliRunner().invoke(cli, ["--help"]).output
+
+    nested = CliRunner().invoke(cli, ["help", "orders", "stats"], prog_name="midtown")
+    assert nested.exit_code == 0, nested.output
+    assert nested.output.startswith("Usage: midtown orders stats [OPTIONS]")
+    assert "--by [month]" in nested.output
+
+    unknown = CliRunner().invoke(cli, ["help", "orders", "nope"])
+    assert unknown.exit_code != 0
+    assert "No such command: orders nope" in unknown.output

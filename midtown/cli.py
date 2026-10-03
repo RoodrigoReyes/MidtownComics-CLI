@@ -157,6 +157,7 @@ def cli(ctx: click.Context) -> None:
     Credentials are read from .env at the project root (MIDTOWN_EMAIL,
     MIDTOWN_PASSWORD). Commands log in automatically when the saved session
     is missing or expired. Add --json to any command for JSON output.
+    Run `midtown help <command>` for details, e.g. `midtown help search`.
 
     \b
     Examples:
@@ -167,6 +168,24 @@ def cli(ctx: click.Context) -> None:
       midtown wishlist --json
     """
     ctx.ensure_object(dict)
+
+
+@cli.command("help")
+@click.argument("command", nargs=-1)
+@click.pass_context
+def help_command(ctx: click.Context, command: tuple[str, ...]) -> None:
+    """Show help for midtown or a command: midtown help orders stats"""
+    root = ctx.find_root()
+    target: click.Command = root.command
+    path = [root.info_name or "midtown"]
+    for name in command:
+        sub = target.get_command(ctx, name) if isinstance(target, click.Group) else None
+        if sub is None:
+            raise click.UsageError(f"No such command: {' '.join([*path[1:], name])}")
+        target = sub
+        path.append(name)
+    with click.Context(target, info_name=" ".join(path)) as target_ctx:
+        click.echo(target.get_help(target_ctx))
 
 
 # ---------------------------------------------------------------- auth
