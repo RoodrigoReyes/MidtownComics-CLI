@@ -933,3 +933,34 @@ def test_date_range_rejects_bad_input(monkeypatch):
     reversed_range = CliRunner().invoke(cli, ["comics", "--from", "2026-10-01", "--to", "2026-09-01"])
     assert reversed_range.exit_code != 0
     assert "--from must be on or before --to" in reversed_range.output
+
+
+def test_by_month_with_value_lists_only_that_month(monkeypatch):
+    import json
+
+    _fake_client(monkeypatch, orders=PERIOD_ORDERS)
+
+    comics = json.loads(CliRunner().invoke(cli, ["comics", "--by-month", "2026-09", "--json"]).output)
+    assert [item["title"] for item in comics] == ["Thor #1", "Batman #1"]
+
+    listed = json.loads(CliRunner().invoke(cli, ["orders", "--by-month", "2026-10", "--json"]).output)
+    assert [order["order_number"] for order in listed] == ["3"]
+
+    stats = json.loads(CliRunner().invoke(cli, ["orders", "stats", "--by-month", "2026-09", "--json"]).output)
+    assert (stats["orders"], stats["total_spent"]) == (2, 22.45)
+
+    text = CliRunner().invoke(cli, ["comics", "--by-month", "2026-10"]).output.splitlines()
+    assert text[0].split()[0] == "DATE"
+    assert text[-1] == "Total: 2 comics · 1 distinct"
+
+    empty = CliRunner().invoke(cli, ["comics", "--by-month", "2025-01"])
+    assert empty.output.strip() == "No comics in that date range."
+
+
+def test_by_month_value_must_be_year_month(monkeypatch):
+    _fake_client(monkeypatch, orders=PERIOD_ORDERS)
+
+    for bad in ("2026-9-01", "2026-13", "09-2026", "2026-09-30"):
+        result = CliRunner().invoke(cli, ["comics", "--by-month", bad])
+        assert result.exit_code != 0, bad
+        assert "YYYY-MM" in result.output

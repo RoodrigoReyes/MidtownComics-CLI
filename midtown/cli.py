@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import shutil
 from collections.abc import Callable
 from datetime import date, datetime
@@ -54,9 +55,22 @@ class IsoDate(click.ParamType):
             self.fail(f"{value!r} is not a date in YYYY-MM-DD format.", param, ctx)
 
 
+ALL_MONTHS = "*"
+
+
+class YearMonth(click.ParamType):
+    name = "YYYY-MM"
+
+    def convert(self, value, param, ctx) -> str:
+        if value == ALL_MONTHS or re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", value):
+            return value
+        self.fail(f"{value!r} is not a month in YYYY-MM format.", param, ctx)
+
+
 period_options = [
-    click.option("--by-month", is_flag=True, expose_value=False, callback=_store("by_month"),
-                 help="Show totals per month."),
+    click.option("--by-month", type=YearMonth(), is_flag=False, flag_value=ALL_MONTHS, expose_value=False,
+                 callback=_store("by_month"),
+                 help="Alone: totals per month. With YYYY-MM: only that month."),
     click.option("--from", "date_from", type=IsoDate(), expose_value=False, callback=_store("date_from"),
                  help="Only orders placed on or after this date."),
     click.option("--to", "date_to", type=IsoDate(), expose_value=False, callback=_store("date_to"),
@@ -322,7 +336,7 @@ def orders(ctx: click.Context) -> None:
     if ctx.invoked_subcommand is not None:
         return
     result = _orders_in_period(ctx)
-    if _option(ctx, "by_month"):
+    if _grouped_by_month(ctx):
         _output_orders_by_month(ctx, result)
     else:
         output(ctx, result, ORDER_COLUMNS, empty=_empty("No orders", ctx))
@@ -368,21 +382,32 @@ def _option(ctx: click.Context, key: str):
 
 
 def _empty(subject: str, ctx: click.Context) -> str:
-    filtered = _option(ctx, "date_from") or _option(ctx, "date_to")
+    month = _option(ctx, "by_month") and not _grouped_by_month(ctx)
+    filtered = _option(ctx, "date_from") or _option(ctx, "date_to") or month
     return f"{subject} in that date range." if filtered else f"{subject} yet."
 
 
+def _grouped_by_month(ctx: click.Context) -> bool:
+    return _option(ctx, "by_month") == ALL_MONTHS
+
+
 def _orders_in_period(ctx: click.Context) -> list[dict]:
-    """Fetch orders and keep those placed between --from and --to (inclusive)."""
+    """Fetch orders placed between --from and --to (inclusive) and in --by-month YYYY-MM."""
     start, end = _option(ctx, "date_from"), _option(ctx, "date_to")
+    month = None if _grouped_by_month(ctx) else _option(ctx, "by_month")
     if start and end and start > end:
         raise click.UsageError("--from must be on or before --to.")
-    if not (start or end):
+    if not (start or end or month):
         return _client_call("orders")
 
     def in_period(order: dict) -> bool:
         placed = _order_date(order)
-        return placed is not None and (not start or placed.date() >= start) and (not end or placed.date() <= end)
+        return (
+            placed is not None
+            and (not start or placed.date() >= start)
+            and (not end or placed.date() <= end)
+            and (not month or placed.strftime("%Y-%m") == month)
+        )
 
     return [order for order in _client_call("orders") if in_period(order)]
 
@@ -412,7 +437,7 @@ def orders_stats(ctx: click.Context) -> None:
     Filter with --from/--to (YYYY-MM-DD).
     """
     result = _orders_in_period(ctx)
-    if _option(ctx, "by_month"):
+    if _grouped_by_month(ctx):
         _output_orders_by_month(ctx, result)
         return
     totals = _order_totals(result)
@@ -489,7 +514,7 @@ def comics(ctx: click.Context) -> None:
     (SUBTOTAL is the sum of comic prices, without shipping or tax).
     """
     result = _orders_in_period(ctx)
-    if _option(ctx, "by_month"):
+    if _grouped_by_month(ctx):
         rows = [{"month": month, **_comics_summary(_comic_items(group))} for month, group in _by_month(result)]
         output(ctx, rows, [
             ("MONTH", lambda row: row["month"], "<"),

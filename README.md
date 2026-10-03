@@ -48,6 +48,7 @@ midtown comics
 midtown orders stats --by-month
 midtown comics --from 2026-09-01 --to 2026-09-30
 midtown orders --by-month --from 2026-01-01
+midtown comics --by-month 2026-09
 midtown orders export --format csv -o orders.csv
 midtown preorders
 midtown wishlist --json
@@ -59,8 +60,11 @@ midtown account
 - **`search`** mirrors the website: pre-orders and sold-out comics are hidden unless `--preorders` ("Include Pre-orders") or `--out-of-stock` ("Show out of stock") are given. Each result has `availability` (`in stock`, `pre-order`, `out of stock`) and `release_date`; cards the site lazy-loads are completed through `/search-load-product-body`, so a 100-result page takes a few seconds.
 - **`orders stats`** reports orders, comics, total spent, distinct products and a breakdown by status.
 - **Periods** — `orders`, `orders stats` and `comics` accept:
-  - `--by-month`: totals per month. For orders: orders, comics and total charged. For comics: comics, distinct titles and `SUBTOTAL` (sum of comic prices, without shipping or tax).
+  - `--by-month`: totals per month. `--by-month YYYY-MM` (e.g. `2026-09`) instead lists only that month (orders, comics, or stats for that month).
+    For orders: orders, comics and total charged. For comics: comics, distinct titles and `SUBTOTAL` (sum of comic prices, without shipping or tax).
   - `--from YYYY-MM-DD` / `--to YYYY-MM-DD`: only orders placed in that range (both ends included). Use one or both, and combine them with `--by-month`.
+
+  Put `--by-month` after the subcommand (`midtown orders stats --by-month`): before a subcommand its optional value would take the subcommand name.
 
 ## Login
 
