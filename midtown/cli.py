@@ -430,13 +430,17 @@ def _output_orders_by_month(ctx: click.Context, orders_result: list[dict]) -> No
 
 @orders.command("stats")
 @_with_options(period_options)
+@click.option("--with-cart", is_flag=True, help="Add your current cart to see the total you would reach.")
 @json_option
 @click.pass_context
-def orders_stats(ctx: click.Context) -> None:
+def orders_stats(ctx: click.Context, with_cart: bool) -> None:
     """Show how much you have spent, by order status or --by-month.
 
-    Filter with --from/--to (YYYY-MM-DD).
+    Filter with --from/--to (YYYY-MM-DD). Add --with-cart to include your
+    current cart (cart prices exclude shipping and tax).
     """
+    if with_cart and _grouped_by_month(ctx):
+        raise click.UsageError("--with-cart cannot be combined with --by-month without a YYYY-MM month.")
     result = _orders_in_period(ctx)
     if _grouped_by_month(ctx):
         _output_orders_by_month(ctx, result)
@@ -444,7 +448,7 @@ def orders_stats(ctx: click.Context) -> None:
     totals = _order_totals(result)
     products = {item.get("product_id") for order in result for item in order.get("items", []) if item.get("product_id")}
     statuses = dict.fromkeys(order.get("status", "") for order in result)
-    output(ctx, {
+    stats = {
         "orders": totals["orders"],
         "comics": totals["comics"],
         "total_spent": totals["total"],
@@ -454,7 +458,16 @@ def orders_stats(ctx: click.Context) -> None:
             status: _order_totals([order for order in result if order.get("status", "") == status])
             for status in statuses
         },
-    })
+    }
+    if with_cart:
+        cart_result = _client_call("cart")
+        stats = {
+            **stats,
+            "cart_items": cart_result["count"],
+            "cart_total": cart_result["total"],
+            "total_with_cart": float(Decimal(str(totals["total"])) + Decimal(str(cart_result["total"]))),
+        }
+    output(ctx, stats)
 
 
 @orders.command("duplicates")

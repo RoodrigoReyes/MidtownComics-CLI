@@ -1047,3 +1047,32 @@ def test_cart_cli_empty_and_json(monkeypatch):
 
     assert CliRunner().invoke(cli, ["cart"]).output.strip() == "Your cart is empty."
     assert json.loads(CliRunner().invoke(cli, ["cart", "--json"]).output)["count"] == 0
+
+
+def test_orders_stats_with_cart_adds_projected_total(monkeypatch):
+    import json
+
+    from midtown.parsers import parse_cart
+
+    _fake_client(monkeypatch, orders=PERIOD_ORDERS, cart=parse_cart(CART_HTML, "https://www.midtowncomics.com"))
+
+    result = CliRunner().invoke(cli, ["orders", "stats", "--with-cart", "--json"])
+
+    assert result.exit_code == 0, result.output
+    stats = json.loads(result.output)
+    assert (stats["total_spent"], stats["cart_items"], stats["cart_total"], stats["total_with_cart"]) == (41.88, 3, 10.93, 52.81)
+
+    text = CliRunner().invoke(cli, ["orders", "stats", "--with-cart"]).output
+    assert "total_with_cart: 52.81" in text
+
+    filtered = json.loads(CliRunner().invoke(cli, ["orders", "stats", "--with-cart", "--by-month", "2026-10", "--json"]).output)
+    assert filtered["total_with_cart"] == 30.36
+
+
+def test_orders_stats_with_cart_rejects_monthly_summary(monkeypatch):
+    _fake_client(monkeypatch, orders=PERIOD_ORDERS, cart={})
+
+    result = CliRunner().invoke(cli, ["orders", "stats", "--with-cart", "--by-month"])
+
+    assert result.exit_code != 0
+    assert "--with-cart cannot be combined with --by-month" in result.output

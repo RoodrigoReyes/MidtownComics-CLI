@@ -47,6 +47,7 @@ midtown orders
 midtown orders show 4349113
 midtown comics
 midtown orders stats --by-month
+midtown orders stats --with-cart
 midtown comics --from 2026-09-01 --to 2026-09-30
 midtown orders --by-month --from 2026-01-01
 midtown comics --by-month 2026-09
@@ -61,7 +62,7 @@ midtown account
 - **`preorders`** lists items with status `Pending` inside regular orders (release date read from each product page) plus Midtown Previews pre-orders (`My Pre-Order Items`), and ends with the combined quantity and price.
 - **`search`** mirrors the website: pre-orders and sold-out comics are hidden unless `--preorders` ("Include Pre-orders") or `--out-of-stock` ("Show out of stock") are given. Each result has `availability` (`in stock`, `pre-order`, `out of stock`) and `release_date`; cards the site lazy-loads are completed through `/search-load-product-body`, so a 100-result page takes a few seconds.
 - **`cart`** reads the cart dropdown (`/cart-load-quick`): quantity, title, unit price and subtotal, the cart total, and how much is left for free shipping. It never changes the cart. Because the site also serves anonymous guest carts, it first confirms the login on an account endpoint so an expired session is renewed instead of showing an empty cart.
-- **`orders stats`** reports orders, comics, total spent, distinct products and a breakdown by status.
+- **`orders stats`** reports orders, comics, total spent, distinct products and a breakdown by status. `--with-cart` adds `cart_items`, `cart_total` and `total_with_cart` (spent + current cart; cart prices exclude shipping and tax). It combines with `--from`/`--to` and `--by-month YYYY-MM`, not with the plain `--by-month` summary.
 - **Periods** — `orders`, `orders stats` and `comics` accept:
   - `--by-month`: totals per month. `--by-month YYYY-MM` (e.g. `2026-09`) instead lists only that month (orders, comics, or stats for that month).
     For orders: orders, comics and total charged. For comics: comics, distinct titles and `SUBTOTAL` (sum of comic prices, without shipping or tax).
