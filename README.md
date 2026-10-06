@@ -1,101 +1,136 @@
 # Midtown Comics CLI
 
-Headless CLI for reading your Midtown Comics account (orders, pre-orders, wishlist, spending) and searching the catalog from a terminal or Linux server.
+A command-line client for your [Midtown Comics](https://www.midtowncomics.com) account. Check orders, pre-orders, your cart and wishlist, track what you spend, and search the catalog without opening a browser. It runs fine on a headless Linux server.
 
-## Setup
+> Unofficial project, not affiliated with Midtown Comics. It reads the same pages your browser does and never places orders or changes your cart.
+
+```console
+$ midtown orders stats --by-month
+MONTH    ORDERS  COMICS   TOTAL
+2026-08       3      11   64.27
+2026-09       4      15   81.90
+```
+
+## Installation
+
+Requires Python 3.10 or newer.
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install -e '.[browser,test]'
+git clone https://github.com/RoodrigoReyes/MidtownComics-CLI.git
+cd MidtownComics-CLI
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e '.[browser]'
 playwright install chromium
 ```
 
-Put your credentials in `.env` at the project root (git-ignored; keep it mode `600`):
+Then add your login:
 
-```text
-MIDTOWN_EMAIL=you@example.com
-MIDTOWN_PASSWORD=your-password
+```bash
+cp .env.example .env
+chmod 600 .env
+# edit .env and set MIDTOWN_EMAIL and MIDTOWN_PASSWORD
 ```
 
-`MIDTOWN_EMAIL`/`MIDTOWN_PASSWORD` environment variables take precedence; `MIDTOWN_ENV_FILE` points to a different `.env`.
+The `browser` extra installs Playwright, which is needed to log in (see [How login works](#how-login-works)). Without it, the CLI can still use an existing session but can't create a new one.
 
-## Commands
+## Usage
 
 ```text
 midtown
-├── orders                  your orders: date, number, status, comics, total
-│   ├── show <number>       one order and its comics
-│   ├── stats               spending by order status
-│   ├── duplicates          comics bought in more than one order
-│   └── export              save as JSON or CSV
-├── comics                  every comic you bought, newest first, with a total
-├── preorders               pre-ordered comics not released yet, with a total
-├── cart                    shopping cart with total (read-only)
-├── wishlist                wishlist with current prices
-│   └── export              save as JSON or CSV
-├── search <text>           catalog search [--preorders] [--out-of-stock]
-├── account                 your profile: name, date of birth, email
-├── auth                    login [--remote] | logout | status
-└── help [command]          help for midtown or any command
+├── orders                list orders
+│   ├── show <number>     one order and its comics
+│   ├── stats             spending totals, by status or by month
+│   ├── duplicates        comics bought in more than one order
+│   └── export            save to JSON or CSV
+├── comics                every comic you've bought, newest first
+├── preorders             pre-ordered comics that haven't shipped yet
+├── cart                  current cart (read-only)
+├── wishlist              wishlist with current prices
+│   └── export            save to JSON or CSV
+├── search <text>         search the catalog
+├── account               name, date of birth and email
+├── auth                  login, logout, status
+└── help [command]
 ```
 
-Run `midtown help` for the overview and `midtown help <command>` for details (e.g. `midtown help orders stats`). Add `--json` to any command (before or after it) for JSON output with every field.
+Some examples:
 
 ```bash
-midtown orders
 midtown orders show 4349113
-midtown comics
-midtown orders stats --by-month
-midtown orders stats --with-cart
 midtown comics --from 2026-09-01 --to 2026-09-30
-midtown orders --by-month --from 2026-01-01
 midtown comics --by-month 2026-09
+midtown orders stats --with-cart
 midtown orders export --format csv -o orders.csv
-midtown preorders
-midtown cart
-midtown wishlist --json
 midtown search "absolute batman" --preorders --out-of-stock
-midtown account
+midtown wishlist --json
 ```
 
-- **`preorders`** lists items with status `Pending` inside regular orders (release date read from each product page) plus Midtown Previews pre-orders (`My Pre-Order Items`), and ends with the combined quantity and price.
-- **`search`** mirrors the website: pre-orders and sold-out comics are hidden unless `--preorders` ("Include Pre-orders") or `--out-of-stock` ("Show out of stock") are given. Each result has `availability` (`in stock`, `pre-order`, `out of stock`) and `release_date`; cards the site lazy-loads are completed through `/search-load-product-body`, so a 100-result page takes a few seconds.
-- **`cart`** reads the cart dropdown (`/cart-load-quick`): quantity, title, unit price and subtotal, the cart total, and how much is left for free shipping. It never changes the cart. Because the site also serves anonymous guest carts, it first confirms the login on an account endpoint so an expired session is renewed instead of showing an empty cart.
-- **`orders stats`** reports orders, comics, total spent, distinct products and a breakdown by status. `--with-cart` adds `cart_items`, `cart_total` and `total_with_cart` (spent + current cart; cart prices exclude shipping and tax). It combines with `--from`/`--to` and `--by-month YYYY-MM`, not with the plain `--by-month` summary.
-- **Periods** — `orders`, `orders stats` and `comics` accept:
-  - `--by-month`: totals per month. `--by-month YYYY-MM` (e.g. `2026-09`) instead lists only that month (orders, comics, or stats for that month).
-    For orders: orders, comics and total charged. For comics: comics, distinct titles and `SUBTOTAL` (sum of comic prices, without shipping or tax).
-  - `--from YYYY-MM-DD` / `--to YYYY-MM-DD`: only orders placed in that range (both ends included). Use one or both, and combine them with `--by-month`.
+Every command accepts `--json`. Run `midtown help <command>` for the full list of options.
 
-  Put `--by-month` after the subcommand (`midtown orders stats --by-month`): before a subcommand its optional value would take the subcommand name.
+### Notes on specific commands
 
-## Login
+**Date filters.** `orders`, `orders stats` and `comics` take `--from` and `--to` (`YYYY-MM-DD`, inclusive) and `--by-month`. On its own, `--by-month` groups results by month; with a value like `--by-month 2026-09` it limits them to that month. Put it after the subcommand (`midtown orders stats --by-month`), otherwise Click reads the subcommand name as its value.
 
-Login is automatic. Midtown's login form requires an invisible reCAPTCHA v3 token generated by page JavaScript, so a plain HTTP form post cannot authenticate. When a command gets the login page back (missing or expired session), the client prints `Logging in to Midtown...`, drives a headless Chromium (persistent profile, "Remember Me" checked) with the `.env` credentials, validates the session against the orders endpoint, saves the cookies to `session.json` and retries once.
+**`orders stats --with-cart`** adds the current cart to your total spent. Cart prices don't include shipping or tax. It can't be combined with the per-month summary.
 
-- `midtown auth login` logs in right away; normally not needed.
-- `midtown auth login --remote` is the manual fallback if the automated login keeps failing: it prints a temporary HTTPS noVNC/ngrok link where you log in yourself (needs Xvfb, x11vnc, novnc and ngrok). The display, VNC server and tunnel are closed after authentication or timeout.
-- `midtown auth logout` deletes `session.json` and the browser profile, so the next command logs in again.
+**`preorders`** combines two sources: items still marked *Pending* in your regular orders, and Midtown Previews pre-orders. Release dates come from each product page, so it makes one extra request per item.
+
+**`search`** behaves like the website: pre-orders and sold-out comics are hidden unless you pass `--preorders` or `--out-of-stock`. The site loads prices for some results lazily, so a full page of 100 results takes a few seconds. Use `--per-page` and `--page` to paginate.
+
+## How login works
+
+Midtown's login form is protected by reCAPTCHA v3, so a plain HTTP request can't sign in. When a command finds that the session is missing or expired, the CLI opens headless Chromium, signs in with the credentials from `.env`, saves the session cookies and retries the request. You don't need to log in by hand.
+
+If the automatic login keeps failing (for example, because reCAPTCHA scores the server too low), run:
+
+```bash
+midtown auth login --remote
+```
+
+It starts a virtual display and prints a temporary noVNC link (through ngrok) where you can sign in yourself. Everything shuts down once you're logged in or after `--timeout` seconds (900 by default). This needs some system packages:
+
+```bash
+sudo apt install xvfb x11vnc novnc
+ngrok config add-authtoken <your-token>
+```
+
+It uses local ports 5900, 6080 and 4040.
+
+Other auth commands:
+
 - `midtown auth status` shows which credential and session files exist.
+- `midtown auth logout` removes the saved session and browser profile.
 
-Local files (mode `600`, never commit them):
+## Configuration
 
-```text
-~/.config/midtown-comics/session.json       saved session cookies (domain, path, expiry preserved)
-~/.config/midtown-comics/browser-profile/   headless Chromium profile
-~/.config/midtown-comics/cookies.json       optional cookies exported from your browser
-```
+| Variable | Default | Description |
+|---|---|---|
+| `MIDTOWN_EMAIL`, `MIDTOWN_PASSWORD` | | Credentials. Take precedence over `.env`. |
+| `MIDTOWN_ENV_FILE` | `.env` in the project root | Load credentials from another file. |
+| `MIDTOWN_CONFIG_DIR` | `~/.config/midtown-comics` | Where the session and browser profile are stored. |
 
-`cookies.json` is an optional manual fallback: only cookies whose domain contains `midtowncomics.com` are loaded, and it may be a list of cookies or an object with a `cookies` list.
+The config directory holds `session.json` (cookies), `browser-profile/` (Chromium profile) and, optionally, `cookies.json`: a cookie export from your own browser that the CLI loads if present. Treat all of them like passwords.
 
 ## Development
 
 ```bash
+pip install -e '.[browser,test]'
 pytest
-midtown --help
 ```
 
-## Important limitation
+```text
+midtown/
+├── cli.py           commands, filters and output formatting
+├── client.py        HTTP client and automatic re-login
+├── parsers.py       HTML parsers for each page
+├── credentials.py   credentials and session storage
+└── remote_auth.py   Playwright login, automatic and --remote
+tests/
+└── test_parsers.py
+```
 
-Midtown may change its private HTML endpoints or tighten its CAPTCHA. The CLI reports a login failure rather than attempting to bypass protections; parsers are covered by fixture tests and should be updated when the site markup changes.
+The tests run against saved HTML fixtures and never touch the live site. If Midtown changes its markup and a command breaks, save the new HTML as a fixture, update the test, then fix the parser.
+
+## Limitations
+
+This tool depends on Midtown's private pages and endpoints, which can change without notice. It doesn't try to get around the CAPTCHA or any other protection: if a login fails, it reports the error.
