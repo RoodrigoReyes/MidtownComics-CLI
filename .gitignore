@@ -4,5 +4,6 @@ __pycache__/
 *.egg-info/
 .env
 .env.*
+!.env.example
 .cortex/
 .coverage
