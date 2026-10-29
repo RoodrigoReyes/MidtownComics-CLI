@@ -48,6 +48,7 @@ midtown
 ├── wishlist              wishlist with current prices
 │   └── export            save to JSON or CSV
 ├── search <text>         search the catalog
+├── cover <product-id>    download and open a comic's cover
 ├── account               name, date of birth and email
 ├── auth                  login, logout, status
 └── help [command]
@@ -62,6 +63,7 @@ midtown comics --by-month 2026-09
 midtown orders stats --with-cart
 midtown orders export --format csv -o orders.csv
 midtown search "absolute batman" --preorders --out-of-stock
+midtown cover 2575497 --size ful
 midtown wishlist --json
 ```
 
@@ -76,6 +78,8 @@ Every command accepts `--json`. Run `midtown help <command>` for the full list o
 **`preorders`** combines two sources: items still marked *Pending* in your regular orders, and Midtown Previews pre-orders. Release dates come from each product page, so it makes one extra request per item.
 
 **`search`** behaves like the website: pre-orders and sold-out comics are hidden unless you pass `--preorders` or `--out-of-stock`. The site loads prices for some results lazily, so a full page of 100 results takes a few seconds. Use `--per-page` and `--page` to paginate.
+
+**`cover`** downloads a comic's cover (`--size xl`, the default, or `ful`) to `covers/` in the project folder and opens it with your desktop image viewer; under WSL it opens in Windows. Covers already in `covers/` open without downloading again. Take the product ID from `search --json` or a product URL.
 
 ## How login works
 
