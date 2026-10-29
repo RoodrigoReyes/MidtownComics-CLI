@@ -296,10 +296,13 @@ def test_remote_auth_saves_complete_playwright_cookie_objects(tmp_path, monkeypa
 def test_remote_auth_saves_cookies_only_after_orders_endpoint_validation(monkeypatch):
     from midtown import remote_auth
 
+    token_page = '<form id="__AjaxAntiForgeryForm"><input name="__RequestVerificationToken" value="tok"></form>'
+
     class Response:
-        def __init__(self, url, text):
+        def __init__(self, url, text, ok=True):
             self.url = url
             self._text = text
+            self.ok = ok
 
         def text(self):
             return self._text
@@ -308,8 +311,13 @@ def test_remote_auth_saves_cookies_only_after_orders_endpoint_validation(monkeyp
         def __init__(self, response):
             self.response = response
 
-        def post(self, url, timeout):
+        def get(self, url, timeout):
+            assert url == "https://www.midtowncomics.com/"
+            return Response(url, token_page)
+
+        def post(self, url, headers, timeout):
             assert url == "https://www.midtowncomics.com/ord-contents"
+            assert headers == {"RequestVerificationToken": "tok"}
             assert timeout == 30_000
             return self.response
 
@@ -322,6 +330,9 @@ def test_remote_auth_saves_cookies_only_after_orders_endpoint_validation(monkeyp
 
     stale = Context(Response("https://www.midtowncomics.com/login", '<input name="txtPassword">'))
     assert remote_auth._save_validated_context_cookies(stale) is False
+    # Midtown answers 500 instead of the login page when a POST is rejected.
+    error = Context(Response("https://www.midtowncomics.com/ord-contents", "<title>Error</title>", ok=False))
+    assert remote_auth._save_validated_context_cookies(error) is False
     assert saved == []
 
     authenticated = Context(Response("https://www.midtowncomics.com/ord-contents", "<div id='tbl-orders'>orders</div>"))
@@ -428,6 +439,7 @@ def _client_with_responses(monkeypatch, tmp_path, responses):
         return response
 
     monkeypatch.setattr(client.session, "post", fake_post)
+    monkeypatch.setattr(client, "_antiforgery_token", lambda: "tok")
     return client, posted
 
 
@@ -651,13 +663,14 @@ def test_search_completes_lazy_loaded_cards_with_product_body(monkeypatch):
         def get(self, url, params, timeout):
             return Response(lazy_card)
 
-        def post(self, url, data, timeout):
+        def post(self, url, data, headers, timeout):
             calls.append((url, data))
             return Response(body)
 
     client = client_module.MidtownClient.__new__(client_module.MidtownClient)
     client.base_url = "https://www.midtowncomics.com"
     client.session = Session()
+    client._antiforgery_token = lambda: "tok"
 
     [product] = client.search("lazy")
 
@@ -1037,8 +1050,9 @@ def test_client_cart_confirms_login_before_reading_quick_cart(monkeypatch):
     client.base_url = "https://www.midtowncomics.com"
     calls = []
     monkeypatch.setattr(client, "_post_authenticated", lambda path: calls.append(("auth", path)))
-    client.session = SimpleNamespace(post=lambda url, data, timeout: calls.append(("post", url, data)) or SimpleNamespace(
+    client.session = SimpleNamespace(post=lambda url, data, headers, timeout: calls.append(("post", url, data)) or SimpleNamespace(
         text=CART_HTML, raise_for_status=lambda: None))
+    monkeypatch.setattr(client, "_antiforgery_token", lambda: "tok")
     monkeypatch.setattr(client, "_save_cookies", lambda: None)
 
     assert client.cart()["count"] == 3
@@ -1099,3 +1113,73 @@ def test_orders_stats_with_cart_rejects_monthly_summary(monkeypatch):
 
     assert result.exit_code != 0
     assert "--with-cart cannot be combined with --by-month" in result.output
+
+
+def test_parse_antiforgery_token_prefers_ajax_form():
+    from midtown.parsers import parse_antiforgery_token
+
+    html = """<form><input name="__RequestVerificationToken" value="other"></form>
+        <form id="__AjaxAntiForgeryForm"><input name="__RequestVerificationToken" value="ajax"></form>"""
+
+    assert parse_antiforgery_token(html) == "ajax"
+    assert parse_antiforgery_token('<input name="__RequestVerificationToken" value="any">') == "any"
+
+
+def test_parse_antiforgery_token_fails_clearly_when_missing():
+    import pytest
+
+    from midtown.parsers import parse_antiforgery_token
+
+    with pytest.raises(RuntimeError, match="anti-forgery token"):
+        parse_antiforgery_token("<html></html>")
+
+
+def test_client_posts_send_antiforgery_token_fetched_once(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    import midtown.client as client_module
+    from midtown import credentials
+
+    monkeypatch.setattr(credentials, "COOKIES_FILE", tmp_path / "cookies.json")
+    monkeypatch.setattr(credentials, "SESSION_FILE", tmp_path / "session.json")
+    client = client_module.MidtownClient()
+    page = '<form id="__AjaxAntiForgeryForm"><input name="__RequestVerificationToken" value="tok-1"></form>'
+    gets, posts = [], []
+
+    def fake_get(url, timeout, **kwargs):
+        gets.append(url)
+        return SimpleNamespace(text=page, raise_for_status=lambda: None)
+
+    def fake_post(url, timeout, headers=None, **kwargs):
+        posts.append(headers)
+        return SimpleNamespace(url=url, text="<table></table>", raise_for_status=lambda: None)
+
+    monkeypatch.setattr(client.session, "get", fake_get)
+    monkeypatch.setattr(client.session, "post", fake_post)
+
+    client.wishlist()
+    client.wishlist()
+
+    assert gets == ["https://www.midtowncomics.com/"]
+    assert posts == [{"RequestVerificationToken": "tok-1"}] * 2
+
+
+def test_client_login_discards_antiforgery_token(monkeypatch, tmp_path):
+    import sys
+    from types import ModuleType
+
+    import midtown.client as client_module
+    from midtown import credentials
+
+    monkeypatch.setattr(credentials, "COOKIES_FILE", tmp_path / "cookies.json")
+    monkeypatch.setattr(credentials, "SESSION_FILE", tmp_path / "session.json")
+    fake_remote = ModuleType("midtown.remote_auth")
+    fake_remote.run_automated_login = lambda: None
+    monkeypatch.setitem(sys.modules, "midtown.remote_auth", fake_remote)
+    client = client_module.MidtownClient()
+    client._antiforgery = "anonymous-token"
+
+    client.login()
+
+    # ASP.NET binds the token to the user, so the anonymous one is invalid after login.
+    assert client._antiforgery is None

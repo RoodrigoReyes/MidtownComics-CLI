@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urljoin
 
@@ -12,6 +13,7 @@ from bs4 import BeautifulSoup
 from .credentials import load_session_cookies, save_session
 from .parsers import (
     parse_account_profile,
+    parse_antiforgery_token,
     parse_cart,
     parse_order_detail,
     parse_orders,
@@ -31,6 +33,8 @@ class MidtownClient:
         self.base_url = base_url.rstrip("/")
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "midtown-comics-cli/0.1"})
+        self._antiforgery: str | None = None
+        self._antiforgery_lock = threading.Lock()
         self._load_cookies()
 
     def _load_cookies(self) -> None:
@@ -70,7 +74,28 @@ class MidtownClient:
 
         run_automated_login()
         self.session.cookies.clear()
+        # ASP.NET binds the anti-forgery token to the user, so fetch a new one.
+        self._antiforgery = None
         self._load_cookies()
+
+    def _antiforgery_token(self) -> str:
+        with self._antiforgery_lock:
+            if self._antiforgery is None:
+                response = self.session.get(self.base_url + "/", timeout=30)
+                response.raise_for_status()
+                self._antiforgery = parse_antiforgery_token(response.text)
+            return self._antiforgery
+
+    def _post(self, path: str, data: dict | None = None) -> requests.Response:
+        """POST like the site's JavaScript: without the anti-forgery header Midtown answers 500."""
+        response = self.session.post(
+            urljoin(self.base_url, path),
+            data=data,
+            headers={"RequestVerificationToken": self._antiforgery_token()},
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response
 
     @staticmethod
     def _looks_like_login(html: str) -> bool:
@@ -82,14 +107,11 @@ class MidtownClient:
 
     def _post_authenticated(self, path: str) -> requests.Response:
         """POST an account endpoint, logging in once automatically if the session expired."""
-        url = urljoin(self.base_url, path)
-        response = self.session.post(url, timeout=30)
-        response.raise_for_status()
+        response = self._post(path)
         if self._is_login_response(response):
             logger.warning("Logging in to Midtown (session missing or expired)...")
             self.login()
-            response = self.session.post(url, timeout=30)
-            response.raise_for_status()
+            response = self._post(path)
             self._require_authenticated(response)
         return response
 
@@ -116,12 +138,7 @@ class MidtownClient:
         return result
 
     def _order_items(self, order_number: str) -> list[dict]:
-        detail = self.session.post(
-            urljoin(self.base_url, "/ord-info"),
-            data={"od_id": order_number, "is_archived": "0"},
-            timeout=30,
-        )
-        detail.raise_for_status()
+        detail = self._post("/ord-info", data={"od_id": order_number, "is_archived": "0"})
         if self._looks_like_login(detail.text):
             return []
         return parse_order_detail(detail.text, self.base_url)
@@ -150,8 +167,7 @@ class MidtownClient:
         # expired session would look like an empty cart. Confirm the login on an
         # account endpoint first; it logs in again automatically if needed.
         self._post_authenticated("/acs-contents")
-        response = self.session.post(urljoin(self.base_url, "/cart-load-quick"), data={"refresh": 1}, timeout=30)
-        response.raise_for_status()
+        response = self._post("/cart-load-quick", data={"refresh": 1})
         self._save_cookies()
         return parse_cart(response.text, self.base_url)
 
@@ -207,12 +223,7 @@ class MidtownClient:
 
     def _product_body(self, product_id: str) -> dict:
         """Fetch the price/cart block the search page loads asynchronously for a card."""
-        response = self.session.post(
-            urljoin(self.base_url, "/search-load-product-body"),
-            data={"pr_parentid": product_id, "pr_id": product_id},
-            timeout=30,
-        )
-        response.raise_for_status()
+        response = self._post("/search-load-product-body", data={"pr_parentid": product_id, "pr_id": product_id})
         return parse_product_body(response.text)
 
     def _require_authenticated(self, response: requests.Response) -> None:

@@ -11,6 +11,7 @@ import urllib.request
 from urllib.parse import urljoin
 
 from .credentials import CONFIG_DIR, read_credentials, save_session
+from .parsers import parse_antiforgery_token
 
 LOGIN_URL = "https://www.midtowncomics.com/login"
 BASE_URL = "https://www.midtowncomics.com"
@@ -58,8 +59,15 @@ def _looks_like_login(html: str) -> bool:
 
 
 def _context_is_authenticated(context) -> bool:
-    response = context.request.post(urljoin(BASE_URL, "/ord-contents"), timeout=30_000)
-    return "/login" not in response.url.rstrip("/").lower() and not _looks_like_login(response.text())
+    # Midtown answers a POST without the anti-forgery header with a 500 error
+    # page, which has no login form, so also require a successful response.
+    token = parse_antiforgery_token(context.request.get(BASE_URL + "/", timeout=30_000).text())
+    response = context.request.post(
+        urljoin(BASE_URL, "/ord-contents"),
+        headers={"RequestVerificationToken": token},
+        timeout=30_000,
+    )
+    return response.ok and "/login" not in response.url.rstrip("/").lower() and not _looks_like_login(response.text())
 
 
 def _save_validated_context_cookies(context) -> bool:

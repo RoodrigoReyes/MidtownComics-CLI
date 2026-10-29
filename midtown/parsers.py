@@ -25,6 +25,16 @@ def _first_text(parent, selectors: list[str]) -> str:
     return ""
 
 
+def parse_antiforgery_token(html: str) -> str:
+    """The ASP.NET anti-forgery token the site's JavaScript sends with every POST."""
+    soup = BeautifulSoup(html, "html.parser")
+    form = soup.find(id="__AjaxAntiForgeryForm") or soup
+    field = form.find("input", attrs={"name": "__RequestVerificationToken"})
+    if not field or not field.get("value"):
+        raise RuntimeError("Midtown page has no anti-forgery token; the site layout may have changed")
+    return str(field["value"])
+
+
 def _parse_midtown_order_tables(soup: BeautifulSoup) -> list[dict]:
     orders = []
     for table_id, status in (
