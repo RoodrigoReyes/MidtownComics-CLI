@@ -135,6 +135,15 @@ class MidtownClient:
     def account(self) -> dict:
         return parse_account_profile(self._post_authenticated("/acs-contents").text)
 
+    def download_cover(self, product_id: str, size: str) -> bytes:
+        """Download a product cover in Midtown's XL or FUL size."""
+        response = self.session.get(
+            urljoin(self.base_url, f"/images/PRODUCT/{size.upper()}/{product_id}_{size}.jpg"),
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.content
+
     def cart(self) -> dict:
         """Items in the shopping cart (read-only)."""
         # The quick cart also answers anonymous visitors with a guest cart, so an

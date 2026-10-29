@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import re
 import shutil
+import subprocess
+import sys
 from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
@@ -20,6 +23,7 @@ from .client import MidtownClient
 Column = tuple[str, Callable[[dict], object], str]
 COLUMN_GAP = "  "
 MIN_TITLE_WIDTH = 20
+COVER_CACHE_DIR = Path(__file__).resolve().parent.parent / "covers"
 
 
 def _set_json(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
@@ -164,6 +168,35 @@ def _client_call(method: str, *args):
 
 def _money(value: object) -> str:
     return f"${value:.2f}" if isinstance(value, (int, float)) else ""
+
+
+def _open_image(path: Path) -> None:
+    """Open an image using the host desktop's default image application."""
+    if sys.platform == "win32":
+        os.startfile(path)  # type: ignore[attr-defined]
+        return
+
+    if sys.platform == "linux" and "microsoft" in Path("/proc/version").read_text().lower():
+        local_app_data = subprocess.check_output(
+            ["cmd.exe", "/c", "echo", "%LOCALAPPDATA%"], cwd="/mnt/c", text=True
+        ).strip()
+        local_dir = Path(subprocess.check_output(["wslpath", "-u", local_app_data], text=True).strip())
+        local_dir = local_dir / "MidtownComics" / "Covers"
+        local_dir.mkdir(parents=True, exist_ok=True)
+        local_copy = local_dir / path.name
+        shutil.copyfile(path, local_copy)
+        windows_path = subprocess.check_output(["wslpath", "-w", str(local_copy)], text=True).strip()
+        subprocess.Popen(
+            ["cmd.exe", "/c", "start", "", windows_path],
+            cwd="/mnt/c",
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return
+
+    opener = "open" if sys.platform == "darwin" else "xdg-open"
+    subprocess.Popen([opener, str(path)])
 
 
 def _comics(order: dict) -> int:
@@ -622,6 +655,28 @@ def account(ctx: click.Context) -> None:
 
 
 # ---------------------------------------------------------------- search
+
+
+@cli.command()
+@click.argument("product_id", type=click.STRING)
+@click.option("--size", type=click.Choice(["xl", "ful"], case_sensitive=False), default="xl", show_default=True,
+              help="Cover size to display.")
+def cover(product_id: str, size: str) -> None:
+    """Download and open a comic cover, reusing the local cache when available."""
+    if not re.fullmatch(r"\d+", product_id):
+        raise click.BadParameter("must be a numeric Midtown product ID", param_hint="product_id")
+    size = size.lower()
+    image_path = COVER_CACHE_DIR / f"{product_id}_{size}.jpg"
+    downloaded = not image_path.is_file()
+    try:
+        if downloaded:
+            image_path.parent.mkdir(parents=True, exist_ok=True)
+            image_path.write_bytes(MidtownClient().download_cover(product_id, size))
+        _open_image(image_path)
+    except Exception as exc:
+        raise click.ClickException(f"Could not open cover: {exc}") from exc
+    action = "Downloaded and opened" if downloaded else "Opened cached"
+    click.echo(f"{action} {size.upper()} cover: {image_path}")
 
 
 @cli.command()
