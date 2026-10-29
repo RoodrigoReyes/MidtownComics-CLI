@@ -21,6 +21,9 @@ test = ["pytest>=8,<9"]
 [project.scripts]
 midtown = "midtown.cli:cli"
 
+[tool.setuptools.packages.find]
+include = ["midtown*"]
+
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]

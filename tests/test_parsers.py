@@ -64,6 +64,29 @@ def test_parse_wishlist_extracts_product_cards():
     ]
 
 
+def test_cover_command_downloads_once_then_reuses_cached_file(monkeypatch, tmp_path):
+    from midtown import cli as cli_module
+
+    calls = []
+    opened = []
+    monkeypatch.setattr(cli_module, "COVER_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(cli_module.MidtownClient, "download_cover", lambda self, product_id, size: (
+        calls.append((product_id, size)) or b"cover-bytes"
+    ))
+    monkeypatch.setattr(cli_module, "_open_image", opened.append)
+
+    first = CliRunner().invoke(cli, ["cover", "2575497"])
+    second = CliRunner().invoke(cli, ["cover", "2575497"])
+
+    assert first.exit_code == 0
+    assert "Downloaded" in first.output
+    assert second.exit_code == 0
+    assert "cached" in second.output
+    assert calls == [("2575497", "xl")]
+    assert opened == [tmp_path / "2575497_xl.jpg"] * 2
+    assert (tmp_path / "2575497_xl.jpg").read_bytes() == b"cover-bytes"
+
+
 
 def test_load_session_reads_browser_cookie_json_and_filters_domains(tmp_path, monkeypatch):
     import json
