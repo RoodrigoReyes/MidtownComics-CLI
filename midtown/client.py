@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from urllib.parse import urljoin
 
 import requests
@@ -20,6 +21,7 @@ from .parsers import (
     parse_preview_items,
     parse_product_body,
     parse_release_date,
+    parse_upc,
     parse_search,
     parse_wishlist,
 )
@@ -200,10 +202,22 @@ class MidtownClient:
         response.raise_for_status()
         return parse_release_date(response.text)
 
-    def search(self, query: str, per_page: int = 100, page: int = 1, include_preorders: bool = False, show_out_of_stock: bool = False) -> list[dict]:
+    def _upc(self, product_id: str) -> str | None:
+        """Fetch the product page and read its UPC; the search page doesn't carry it."""
+        if not product_id:
+            return None
+        response = self.session.get(urljoin(self.base_url, f"/product/{product_id}"), timeout=30)
+        response.raise_for_status()
+        return parse_upc(response.text)
+
+    def search(self, query: str = "", per_page: int = 100, page: int = 1, include_preorders: bool = False, show_out_of_stock: bool = False, release_date: date | None = None, with_upc: bool = False) -> list[dict]:
         # Same as the site: the "Include Pre-orders" (rel) and "Show out of stock" (os)
         # filters are only sent when enabled.
-        params: dict[str, str | int] = {"q": query, "pp": per_page, "pj": page}
+        params: dict[str, str | int] = {"pp": per_page, "pj": page}
+        if query:
+            params["q"] = query
+        if release_date:
+            params["sd"] = release_date.strftime("%m/%d/%Y")
         if include_preorders:
             params["rel"] = 1
         if show_out_of_stock:
@@ -216,10 +230,16 @@ class MidtownClient:
         with ThreadPoolExecutor(max_workers=8) as pool:
             bodies = list(pool.map(self._product_body, [product["product_id"] for product in lazy]))
         lazy_bodies = dict(zip((product["product_id"] for product in lazy), bodies))
-        return [
+        results = [
             {**product, **{key: value for key, value in lazy_bodies.get(product["product_id"], {}).items() if value not in (None, "")}}
             for product in products
         ]
+        if with_upc:
+            # Each UPC needs its own product-page request: the search page doesn't include it.
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                upcs = pool.map(self._upc, [product["product_id"] for product in results])
+            results = [{**product, "upc": upc} for product, upc in zip(results, upcs)]
+        return results
 
     def _product_body(self, product_id: str) -> dict:
         """Fetch the price/cart block the search page loads asynchronously for a card."""

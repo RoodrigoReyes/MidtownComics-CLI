@@ -245,6 +245,13 @@ def parse_release_date(html: str) -> str:
     return _text(value)
 
 
+def parse_upc(html: str) -> str | None:
+    """Return the UPC shown on a product page (#upc-code), or None if absent."""
+    soup = BeautifulSoup(html, "html.parser")
+    node = soup.find(id="upc-code")
+    return _text(node) if node else None
+
+
 def parse_preview_items(html: str, base_url: str) -> list[dict]:
     """Parse the "My Pre-Order Items" (Previews program) section tables.
 

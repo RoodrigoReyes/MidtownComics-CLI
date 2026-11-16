@@ -680,15 +680,18 @@ def cover(product_id: str, size: str) -> None:
 
 
 @cli.command()
-@click.argument("query")
+@click.argument("query", required=False, default="")
 @click.option("--preorders", is_flag=True, help='Include comics not released yet (site: "Include Pre-orders").')
 @click.option("--out-of-stock", is_flag=True, help='Include sold-out comics (site: "Show out of stock").')
+@click.option("--release-date", type=IsoDate(), help="Only products with this release date (YYYY-MM-DD).")
+@click.option("--with-upc", is_flag=True,
+              help="Add each product's UPC to --json output (one extra request per result).")
 @click.option("--per-page", type=click.IntRange(min=1, max=100), default=100, show_default=True,
               help="Results per page (fewer is faster).")
 @click.option("--page", type=click.IntRange(min=1), default=1, show_default=True, help="Results page number.")
 @json_option
 @click.pass_context
-def search(ctx: click.Context, query: str, preorders: bool, out_of_stock: bool, per_page: int, page: int) -> None:
+def search(ctx: click.Context, query: str, preorders: bool, out_of_stock: bool, release_date: date | None, with_upc: bool, per_page: int, page: int) -> None:
     """Search the Midtown Comics catalog.
 
     Like the website, pre-orders and sold-out comics are hidden unless you add
@@ -699,8 +702,9 @@ def search(ctx: click.Context, query: str, preorders: bool, out_of_stock: bool, 
       midtown search "spider-man"
       midtown search "absolute batman" --preorders --out-of-stock
       midtown search "x-men" --per-page 20 --page 2
+      midtown search --release-date 2026-11-18
     """
-    output(ctx, _client_call("search", query, per_page, page, preorders, out_of_stock), [
+    output(ctx, _client_call("search", query, per_page, page, preorders, out_of_stock, release_date, with_upc), [
         ("TITLE", lambda item: item.get("title"), "<"),
         ("PRICE", lambda item: item.get("price"), ">"),
         ("AVAILABILITY", lambda item: item.get("availability"), "<"),
