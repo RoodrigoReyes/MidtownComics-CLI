@@ -79,6 +79,8 @@ Every command accepts `--json`. Run `midtown help <command>` for the full list o
 
 **`search`** behaves like the website: pre-orders and sold-out comics are hidden unless you pass `--preorders` or `--out-of-stock`. The site loads prices for some results lazily, so a full page of 100 results takes a few seconds. Use `--per-page` and `--page` to paginate.
 
+Filter search results by launch date with `midtown search --release-date 2026-11-18` (Midtown's `sd` filter). Combine it with a search term to narrow the date's releases.
+
 **`cover`** downloads a comic's cover (`--size xl`, the default, or `ful`) to `covers/` in the project folder and opens it with your desktop image viewer; under WSL it opens in Windows. Covers already in `covers/` open without downloading again. Take the product ID from `search --json` or a product URL.
 
 ## How login works

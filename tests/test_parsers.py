@@ -539,6 +539,15 @@ def test_parse_release_date_from_product_page():
     assert parse_release_date("<html>no date</html>") == ""
 
 
+def test_parse_upc_from_product_page():
+    from midtown.parsers import parse_upc
+
+    html = '<div><span id="upc-code">76194138023003921</span></div>'
+
+    assert parse_upc(html) == "76194138023003921"
+    assert parse_upc("<html>no upc</html>") is None
+
+
 def test_parse_preview_items_reads_rows_by_section_and_skips_empty_tables():
     from midtown.parsers import parse_preview_items
 
@@ -620,6 +629,8 @@ def test_parse_search_reports_availability_and_release_date():
 
 
 def test_search_sends_filters_only_when_enabled(monkeypatch):
+    from datetime import date
+
     import midtown.client as client_module
 
     sent = []
@@ -636,10 +647,12 @@ def test_search_sends_filters_only_when_enabled(monkeypatch):
 
     client.search("batman")
     client.search("batman", include_preorders=True, show_out_of_stock=True)
+    client.search(release_date=date(2026, 11, 18))
 
     assert sent == [
         {"q": "batman", "pp": 100, "pj": 1},
         {"q": "batman", "pp": 100, "pj": 1, "rel": 1, "os": 1},
+        {"pp": 100, "pj": 1, "sd": "11/18/2026"},
     ]
 
 
@@ -831,7 +844,7 @@ def test_search_short_filter_flags(monkeypatch):
     result = CliRunner().invoke(cli, ["search", "batman", "--preorders", "--out-of-stock"])
 
     assert result.exit_code == 0, result.output
-    assert calls == [("batman", 100, 1, True, True)]
+    assert calls == [("batman", 100, 1, True, True, None, False)]
     assert result.output.strip() == "No results."
 
 
