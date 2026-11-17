@@ -4,11 +4,12 @@
 
 <h1 align="center">Midtown Comics CLI</h1>
 
-<p align="center">A command-line client for your Midtown Comics account.</p>
+<p align="center">Check your orders, cart, and wishlist, and search the catalog from the terminal.</p>
 
-A command-line client for your [Midtown Comics](https://www.midtowncomics.com) account. Check orders, pre-orders, your cart and wishlist, track what you spend, and search the catalog without opening a browser. It runs fine on a headless Linux server.
+A command-line client for your [Midtown Comics](https://www.midtowncomics.com) account. Check orders, pre-orders, your cart and wishlist, track what you spend, and search the catalog without opening a browser. It runs on a headless Linux server.
 
-> Unofficial project, not affiliated with Midtown Comics. It reads the same pages your browser does and never places orders or changes your cart.
+> [!NOTE]
+> Unofficial project, not affiliated with Midtown Comics. It reads the same pages your browser does; it never places orders or changes your cart.
 
 ```console
 $ midtown orders stats --by-month
@@ -17,9 +18,13 @@ MONTH    ORDERS  COMICS   TOTAL
 2026-09       4      15   81.90
 ```
 
-## Installation
+## Requirements
 
-Requires Python 3.10 or newer.
+- Python 3.10 or later
+- A Midtown Comics account
+- Chromium via Playwright for login (installed by the `browser` extra below)
+
+## Installation
 
 ```bash
 git clone https://github.com/RoodrigoReyes/MidtownComics-CLI.git
@@ -29,15 +34,21 @@ pip install -e '.[browser]'
 playwright install chromium
 ```
 
-Then add your login:
+The `browser` extra installs Playwright, which is needed to log in (see [How login works](#how-login-works)). Without it, the CLI can still use an existing session but cannot create a new one.
 
-```bash
-cp .env.example .env
-chmod 600 .env
-# edit .env and set MIDTOWN_EMAIL and MIDTOWN_PASSWORD
+## Set up your account
+
+Copy `.env.example` to `.env` in the project root and fill in your credentials:
+
+```dotenv
+MIDTOWN_EMAIL=your_email
+MIDTOWN_PASSWORD=your_password
 ```
 
-The `browser` extra installs Playwright, which is needed to log in (see [How login works](#how-login-works)). Without it, the CLI can still use an existing session but can't create a new one.
+Environment variables of the same name take precedence over `.env`.
+
+> [!IMPORTANT]
+> Keep `.env` private and do not commit it (`chmod 600 .env`). The saved session under `~/.config/midtown-comics/` grants access to your account; protect it as you would a password.
 
 ## Usage
 
@@ -77,21 +88,22 @@ Every command accepts `--json`. Run `midtown help <command>` for the full list o
 
 ### Notes on specific commands
 
-**Date filters.** `orders`, `orders stats` and `comics` take `--from` and `--to` (`YYYY-MM-DD`, inclusive) and `--by-month`. On its own, `--by-month` groups results by month; with a value like `--by-month 2026-09` it limits them to that month. Put it after the subcommand (`midtown orders stats --by-month`), otherwise Click reads the subcommand name as its value.
+**Date filters.** `orders`, `orders stats` and `comics` take `--from` and `--to` (`YYYY-MM-DD`, inclusive) and `--by-month`. On its own, `--by-month` groups results by month; with a value like `--by-month 2026-09` it limits them to that month.
 
-**`orders stats --with-cart`** adds the current cart to your total spent. Cart prices don't include shipping or tax. It can't be combined with the per-month summary.
+> [!TIP]
+> Put `--by-month` after the subcommand (`midtown orders stats --by-month`), otherwise Click reads the subcommand name as its value.
+
+**`orders stats --with-cart`** adds the current cart to your total spent. Cart prices do not include shipping or tax. It cannot be combined with the per-month summary.
 
 **`preorders`** combines two sources: items still marked *Pending* in your regular orders, and Midtown Previews pre-orders. Release dates come from each product page, so it makes one extra request per item.
 
-**`search`** behaves like the website: pre-orders and sold-out comics are hidden unless you pass `--preorders` or `--out-of-stock`. The site loads prices for some results lazily, so a full page of 100 results takes a few seconds. Use `--per-page` and `--page` to paginate.
-
-Filter search results by launch date with `midtown search --release-date 2026-11-18` (Midtown's `sd` filter). Combine it with a search term to narrow the date's releases.
+**`search`** behaves like the website: pre-orders and sold-out comics are hidden unless you pass `--preorders` or `--out-of-stock`. The site loads prices for some results lazily, so a full page of 100 results takes a few seconds. Use `--per-page` and `--page` to paginate. Filter by launch date with `midtown search --release-date 2026-11-18` (Midtown's `sd` filter), optionally combined with a search term.
 
 **`cover`** downloads a comic's cover (`--size xl`, the default, or `ful`) to `covers/` in the project folder and opens it with your desktop image viewer; under WSL it opens in Windows. Covers already in `covers/` open without downloading again. Take the product ID from `search --json` or a product URL.
 
 ## How login works
 
-Midtown's login form is protected by reCAPTCHA v3, so a plain HTTP request can't sign in. When a command finds that the session is missing or expired, the CLI opens headless Chromium, signs in with the credentials from `.env`, saves the session cookies and retries the request. You don't need to log in by hand.
+Midtown's login form is protected by reCAPTCHA v3, so a plain HTTP request cannot sign in. When a command finds that the session is missing or expired, the CLI opens headless Chromium, signs in with the credentials from `.env`, saves the session cookies and retries the request. You do not need to log in by hand.
 
 If the automatic login keeps failing (for example, because reCAPTCHA scores the server too low), run:
 
@@ -99,7 +111,7 @@ If the automatic login keeps failing (for example, because reCAPTCHA scores the 
 midtown auth login --remote
 ```
 
-It starts a virtual display and prints a temporary noVNC link (through ngrok) where you can sign in yourself. Everything shuts down once you're logged in or after `--timeout` seconds (900 by default). This needs some system packages:
+It starts a virtual display and prints a temporary noVNC link (through ngrok) where you can sign in yourself. Everything shuts down once you are logged in or after `--timeout` seconds (900 by default). This needs some system packages:
 
 ```bash
 sudo apt install xvfb x11vnc novnc
@@ -116,7 +128,7 @@ Other auth commands:
 ## Configuration
 
 | Variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `MIDTOWN_EMAIL`, `MIDTOWN_PASSWORD` | | Credentials. Take precedence over `.env`. |
 | `MIDTOWN_ENV_FILE` | `.env` in the project root | Load credentials from another file. |
 | `MIDTOWN_CONFIG_DIR` | `~/.config/midtown-comics` | Where the session and browser profile are stored. |
@@ -145,4 +157,4 @@ The tests run against saved HTML fixtures and never touch the live site. If Midt
 
 ## Limitations
 
-This tool depends on Midtown's private pages and endpoints, which can change without notice. It doesn't try to get around the CAPTCHA or any other protection: if a login fails, it reports the error.
+This tool depends on Midtown's private pages and endpoints, which can change without notice. It does not try to get around the CAPTCHA or any other protection: if a login fails, it reports the error.
