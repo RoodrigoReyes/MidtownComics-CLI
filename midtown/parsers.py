@@ -245,11 +245,15 @@ def parse_release_date(html: str) -> str:
     return _text(value)
 
 
-def parse_upc(html: str) -> str | None:
-    """Return the UPC shown on a product page (#upc-code), or None if absent."""
+def parse_product_code(html: str) -> tuple[str | None, str | None]:
+    """Return (code, code_type) from a product page: UPC (#upc-code) if present,
+    else ISBN (#isbn-code), else (None, None)."""
     soup = BeautifulSoup(html, "html.parser")
-    node = soup.find(id="upc-code")
-    return _text(node) if node else None
+    for code_type in ("upc", "isbn"):
+        code = _text(soup.find(id=f"{code_type}-code"))
+        if code:
+            return code, code_type
+    return None, None
 
 
 def parse_preview_items(html: str, base_url: str) -> list[dict]:

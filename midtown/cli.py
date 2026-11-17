@@ -685,7 +685,8 @@ def cover(product_id: str, size: str) -> None:
 @click.option("--out-of-stock", is_flag=True, help='Include sold-out comics (site: "Show out of stock").')
 @click.option("--release-date", type=IsoDate(), help="Only products with this release date (YYYY-MM-DD).")
 @click.option("--with-upc", is_flag=True,
-              help="Add each product's UPC to --json output (one extra request per result).")
+              help="Add each product's code/code_type (UPC, else ISBN) to --json "
+                   "output (one extra request per result).")
 @click.option("--per-page", type=click.IntRange(min=1, max=100), default=100, show_default=True,
               help="Results per page (fewer is faster).")
 @click.option("--page", type=click.IntRange(min=1), default=1, show_default=True, help="Results page number.")
