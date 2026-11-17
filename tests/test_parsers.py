@@ -737,6 +737,8 @@ def _fake_client(monkeypatch, **methods):
 
 
 def test_preorders_prints_table_with_total_footer(monkeypatch):
+    monkeypatch.setattr('click.testing._NamedTextIOWrapper.isatty', lambda self: self.name == '<stdout>')
+    monkeypatch.setenv('COLUMNS', '200')
     _fake_client(monkeypatch, preorders=[
         {"title": "Midnight Spider-Man #1", "quantity": 2, "unit_price": 5.99, "release_date": "10/7/2026", "order_number": "4347877"},
         {"title": "Midnight X-Men #1", "quantity": 1, "unit_price": 3.99, "release_date": "10/14/2026", "order_number": "4347877"},
@@ -744,20 +746,22 @@ def test_preorders_prints_table_with_total_footer(monkeypatch):
 
     result = CliRunner().invoke(cli, ["preorders"])
 
-    assert result.exit_code == 0, result.output
-    lines = result.output.splitlines()
-    assert lines[0].split() == ["RELEASE", "TITLE", "QTY", "PRICE", "ORDER"]
+    assert result.exit_code == 0, result.stdout
+    lines = result.stdout.splitlines()
+    assert lines[0].split() == ["RELEASE", "TITLE", "QTY", "PRICE", "ORDER", "LINK"]
     assert lines[1].split()[0] == "10/7/2026"
     assert "Midnight Spider-Man #1" in lines[1]
     assert lines[-1] == "Total: 3 items · $15.97"
 
 
 def test_list_commands_say_when_there_is_nothing(monkeypatch):
+    monkeypatch.setattr('click.testing._NamedTextIOWrapper.isatty', lambda self: self.name == '<stdout>')
+    monkeypatch.setenv('COLUMNS', '200')
     _fake_client(monkeypatch, preorders=[], wishlist=[], orders=[])
 
-    assert CliRunner().invoke(cli, ["preorders"]).output.strip() == "No pending pre-orders."
-    assert CliRunner().invoke(cli, ["wishlist"]).output.strip() == "Your wishlist is empty."
-    assert CliRunner().invoke(cli, ["orders", "duplicates"]).output.strip() == "No product was bought in more than one order."
+    assert CliRunner().invoke(cli, ["preorders"]).stdout.strip() == "No pending pre-orders."
+    assert CliRunner().invoke(cli, ["wishlist"]).stdout.strip() == "Your wishlist is empty."
+    assert CliRunner().invoke(cli, ["orders", "duplicates"]).stdout.strip() == "No product was bought in more than one order."
 
 
 def test_orders_duplicates_counts_products_across_orders(monkeypatch):
@@ -776,6 +780,8 @@ def test_orders_duplicates_counts_products_across_orders(monkeypatch):
 
 
 def test_orders_show_fetches_only_the_requested_order(monkeypatch):
+    monkeypatch.setattr('click.testing._NamedTextIOWrapper.isatty', lambda self: self.name == '<stdout>')
+    monkeypatch.setenv('COLUMNS', '200')
     calls = []
     order = {"order_number": "7", "date": "9/30/2026", "status": "In Process", "total": 5.99,
              "items": [{"title": "Batman #1", "quantity": 1, "unit_price": 5.99, "status": "Pending"}]}
@@ -783,10 +789,10 @@ def test_orders_show_fetches_only_the_requested_order(monkeypatch):
 
     result = CliRunner().invoke(cli, ["orders", "show", "7"])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 0, result.stdout
     assert calls == ["7"]
-    assert "Order 7 · 9/30/2026 · In Process · $5.99" in result.output
-    assert "Batman #1" in result.output
+    assert "Order 7 · 9/30/2026 · In Process · $5.99" in result.stdout
+    assert "Batman #1" in result.stdout
 
 
 def test_client_order_requests_detail_of_one_order(monkeypatch, tmp_path):
@@ -840,14 +846,16 @@ def test_auth_login_remote_uses_remote_browser(monkeypatch):
 
 
 def test_search_short_filter_flags(monkeypatch):
+    monkeypatch.setattr('click.testing._NamedTextIOWrapper.isatty', lambda self: self.name == '<stdout>')
+    monkeypatch.setenv('COLUMNS', '200')
     calls = []
     _fake_client(monkeypatch, search=lambda *args: calls.append(args) or [])
 
     result = CliRunner().invoke(cli, ["search", "batman", "--preorders", "--out-of-stock"])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 0, result.stdout
     assert calls == [("batman", 100, 1, True, True, None, False)]
-    assert result.output.strip() == "No results."
+    assert result.stdout.strip() == "No results."
 
 
 def test_client_warns_before_automatic_login(monkeypatch, tmp_path, caplog):
@@ -879,6 +887,8 @@ def test_help_command_shows_root_and_nested_help():
 
 
 def test_comics_lists_every_purchased_comic_newest_first(monkeypatch):
+    monkeypatch.setattr('click.testing._NamedTextIOWrapper.isatty', lambda self: self.name == '<stdout>')
+    monkeypatch.setenv('COLUMNS', '200')
     import json
 
     _fake_client(monkeypatch, orders=[
@@ -890,22 +900,24 @@ def test_comics_lists_every_purchased_comic_newest_first(monkeypatch):
     ])
 
     text = CliRunner().invoke(cli, ["comics"])
-    assert text.exit_code == 0, text.output
-    lines = text.output.splitlines()
-    assert lines[0].split() == ["DATE", "QTY", "TITLE", "PRICE", "STATUS", "ORDER"]
+    assert text.exit_code == 0, text.stdout
+    lines = text.stdout.splitlines()
+    assert lines[0].split() == ["DATE", "QTY", "TITLE", "PRICE", "STATUS", "ORDER", "LINK"]
     assert lines[1].split()[:2] == ["10/1/2026", "1"]
     assert lines[3].split()[0] == "9/20/2026"
     assert lines[-1] == "Total: 4 comics · 2 distinct"
 
-    data = json.loads(CliRunner().invoke(cli, ["comics", "--json"]).output)
+    data = json.loads(CliRunner().invoke(cli, ["comics", "--json"]).stdout)
     assert data[2] == {"order_number": "1", "order_date": "9/20/2026", "product_id": "10",
                        "title": "Batman #1", "quantity": 1, "unit_price": 3.99, "status": "Shipped"}
 
 
 def test_comics_says_when_there_are_none(monkeypatch):
+    monkeypatch.setattr('click.testing._NamedTextIOWrapper.isatty', lambda self: self.name == '<stdout>')
+    monkeypatch.setenv('COLUMNS', '200')
     _fake_client(monkeypatch, orders=[])
 
-    assert CliRunner().invoke(cli, ["comics"]).output.strip() == "No comics yet."
+    assert CliRunner().invoke(cli, ["comics"]).stdout.strip() == "No comics yet."
 
 
 PERIOD_ORDERS = [
@@ -934,18 +946,20 @@ def test_orders_by_month_works_on_list_and_stats(monkeypatch):
 
 
 def test_comics_by_month_summarises_items(monkeypatch):
+    monkeypatch.setattr('click.testing._NamedTextIOWrapper.isatty', lambda self: self.name == '<stdout>')
+    monkeypatch.setenv('COLUMNS', '200')
     import json
 
     _fake_client(monkeypatch, orders=PERIOD_ORDERS)
 
     result = CliRunner().invoke(cli, ["comics", "--by-month", "--json"])
 
-    assert result.exit_code == 0, result.output
-    assert json.loads(result.output) == [
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == [
         {"month": "2026-09", "comics": 4, "distinct": 2, "subtotal": 14.96},
         {"month": "2026-10", "comics": 2, "distinct": 1, "subtotal": 8.0},
     ]
-    text = CliRunner().invoke(cli, ["comics", "--by-month"]).output.splitlines()
+    text = CliRunner().invoke(cli, ["comics", "--by-month"]).stdout.splitlines()
     assert text[0].split() == ["MONTH", "COMICS", "DISTINCT", "SUBTOTAL"]
 
 
@@ -987,25 +1001,27 @@ def test_date_range_rejects_bad_input(monkeypatch):
 
 
 def test_by_month_with_value_lists_only_that_month(monkeypatch):
+    monkeypatch.setattr('click.testing._NamedTextIOWrapper.isatty', lambda self: self.name == '<stdout>')
+    monkeypatch.setenv('COLUMNS', '200')
     import json
 
     _fake_client(monkeypatch, orders=PERIOD_ORDERS)
 
-    comics = json.loads(CliRunner().invoke(cli, ["comics", "--by-month", "2026-09", "--json"]).output)
+    comics = json.loads(CliRunner().invoke(cli, ["comics", "--by-month", "2026-09", "--json"]).stdout)
     assert [item["title"] for item in comics] == ["Thor #1", "Batman #1"]
 
-    listed = json.loads(CliRunner().invoke(cli, ["orders", "--by-month", "2026-10", "--json"]).output)
+    listed = json.loads(CliRunner().invoke(cli, ["orders", "--by-month", "2026-10", "--json"]).stdout)
     assert [order["order_number"] for order in listed] == ["3"]
 
-    stats = json.loads(CliRunner().invoke(cli, ["orders", "stats", "--by-month", "2026-09", "--json"]).output)
+    stats = json.loads(CliRunner().invoke(cli, ["orders", "stats", "--by-month", "2026-09", "--json"]).stdout)
     assert (stats["orders"], stats["total_spent"]) == (2, 22.45)
 
-    text = CliRunner().invoke(cli, ["comics", "--by-month", "2026-10"]).output.splitlines()
+    text = CliRunner().invoke(cli, ["comics", "--by-month", "2026-10"]).stdout.splitlines()
     assert text[0].split()[0] == "DATE"
     assert text[-1] == "Total: 2 comics · 1 distinct"
 
     empty = CliRunner().invoke(cli, ["comics", "--by-month", "2025-01"])
-    assert empty.output.strip() == "No comics in that date range."
+    assert empty.stdout.strip() == "No comics in that date range."
 
 
 def test_by_month_value_must_be_year_month(monkeypatch):
@@ -1078,30 +1094,36 @@ def test_client_cart_confirms_login_before_reading_quick_cart(monkeypatch):
 
 
 def test_cart_cli_prints_items_total_and_free_shipping(monkeypatch):
+    monkeypatch.setattr('click.testing._NamedTextIOWrapper.isatty', lambda self: self.name == '<stdout>')
+    monkeypatch.setenv('COLUMNS', '200')
     from midtown.parsers import parse_cart
 
     _fake_client(monkeypatch, cart=parse_cart(CART_HTML, "https://www.midtowncomics.com"))
 
-    lines = CliRunner().invoke(cli, ["cart"]).output.splitlines()
+    lines = CliRunner().invoke(cli, ["cart"]).stdout.splitlines()
 
     assert lines[0].split() == ["QTY", "TITLE", "PRICE", "SUBTOTAL"]
-    assert lines[2].split()[0] == "2" and lines[2].split()[-2:] == ["2.99", "5.98"]
+    assert lines[2].split()[0] == "2" and lines[2].split()[-2:] == ["$2.99", "$5.98"]
     assert lines[-2] == "Total: 3 items · $10.93"
     assert lines[-1] == "Spend $78.07 more for free shipping on comics."
 
 
 def test_cart_cli_empty_and_json(monkeypatch):
+    monkeypatch.setattr('click.testing._NamedTextIOWrapper.isatty', lambda self: self.name == '<stdout>')
+    monkeypatch.setenv('COLUMNS', '200')
     import json
 
     from midtown.parsers import parse_cart
 
     _fake_client(monkeypatch, cart=parse_cart(EMPTY_CART_HTML, "https://www.midtowncomics.com"))
 
-    assert CliRunner().invoke(cli, ["cart"]).output.strip() == "Your cart is empty."
-    assert json.loads(CliRunner().invoke(cli, ["cart", "--json"]).output)["count"] == 0
+    assert CliRunner().invoke(cli, ["cart"]).stdout.strip() == "Your cart is empty."
+    assert json.loads(CliRunner().invoke(cli, ["cart", "--json"]).stdout)["count"] == 0
 
 
 def test_orders_stats_with_cart_adds_projected_total(monkeypatch):
+    monkeypatch.setattr('click.testing._NamedTextIOWrapper.isatty', lambda self: self.name == '<stdout>')
+    monkeypatch.setenv('COLUMNS', '200')
     import json
 
     from midtown.parsers import parse_cart
@@ -1110,14 +1132,14 @@ def test_orders_stats_with_cart_adds_projected_total(monkeypatch):
 
     result = CliRunner().invoke(cli, ["orders", "stats", "--with-cart", "--json"])
 
-    assert result.exit_code == 0, result.output
-    stats = json.loads(result.output)
+    assert result.exit_code == 0, result.stdout
+    stats = json.loads(result.stdout)
     assert (stats["total_spent"], stats["cart_items"], stats["cart_total"], stats["total_with_cart"]) == (41.88, 3, 10.93, 52.81)
 
-    text = CliRunner().invoke(cli, ["orders", "stats", "--with-cart"]).output
+    text = CliRunner().invoke(cli, ["orders", "stats", "--with-cart"]).stdout
     assert "total_with_cart: 52.81" in text
 
-    filtered = json.loads(CliRunner().invoke(cli, ["orders", "stats", "--with-cart", "--by-month", "2026-10", "--json"]).output)
+    filtered = json.loads(CliRunner().invoke(cli, ["orders", "stats", "--with-cart", "--by-month", "2026-10", "--json"]).stdout)
     assert filtered["total_with_cart"] == 30.36
 
 

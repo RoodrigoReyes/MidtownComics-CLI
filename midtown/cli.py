@@ -3,38 +3,42 @@
 from __future__ import annotations
 
 import csv
+import itertools
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable
+import threading
+import time
+import traceback
+from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from io import StringIO
 from pathlib import Path
 
 import click
+import requests
 
-from .client import MidtownClient
+from .client import BASE_URL, MidtownClient
+from .output import Column, _product_url, output
 
-# (header, value getter, alignment "<" left / ">" right)
-Column = tuple[str, Callable[[dict], object], str]
-COLUMN_GAP = "  "
-MIN_TITLE_WIDTH = 20
 COVER_CACHE_DIR = Path(__file__).resolve().parent.parent / "covers"
 
 
-def _set_json(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
+def _set_mode(ctx: click.Context, param: click.Parameter, value: bool) -> None:
     if value:
-        ctx.ensure_object(dict)["json"] = True
+        ctx.find_root().ensure_object(dict)[param.name] = True
 
 
-# --json is accepted before or after any command: `midtown --json orders` == `midtown orders --json`.
-json_option = click.option(
-    "--json", is_flag=True, expose_value=False, callback=_set_json, help="Output machine-readable JSON."
-)
+def output_options(function):
+    for flag, help_text in reversed((("--json", "Output machine-readable JSON."),
+                                     ("--quiet", "Output JSON without progress messages."),
+                                     ("--verbose", "Show tracebacks for errors."))):
+        function = click.option(flag, is_flag=True, expose_value=False, callback=_set_mode, help=help_text)(function)
+    return function
 
 
 def _store(key: str):
@@ -92,82 +96,73 @@ def _with_options(options: list):
 
 
 def _wants_json(ctx: click.Context) -> bool:
-    return bool((ctx.obj or {}).get("json"))
+    opts = ctx.find_root().obj or {}
+    return bool(opts.get("json") or opts.get("quiet") or not sys.stdout.isatty())
 
 
-def _cell(value: object) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, float):
-        return f"{value:.2f}"
-    return str(value)
+@contextmanager
+def _spinner(enabled: bool):
+    stop = threading.Event()
 
+    def animate():
+        for frame in itertools.cycle("|/-\\"):
+            click.echo(f"\r{frame} Working...", nl=False, err=True)
+            if stop.wait(0.1):
+                break
 
-def _fit(text: str, width: int) -> str:
-    return text if len(text) <= width else text[: width - 1] + "…"
-
-
-def _print_table(rows: list[dict], columns: list[Column]) -> None:
-    """Print aligned columns; a TITLE column shrinks to fit the terminal width."""
-    headers = [header for header, _, _ in columns]
-    cells = [[_cell(getter(row)) for _, getter, _ in columns] for row in rows]
-    widths = [max([len(header)] + [len(row[index]) for row in cells]) for index, header in enumerate(headers)]
-    if "TITLE" in headers:
-        index = headers.index("TITLE")
-        others = sum(widths) - widths[index] + len(COLUMN_GAP) * (len(widths) - 1)
-        widths[index] = max(MIN_TITLE_WIDTH, min(widths[index], shutil.get_terminal_size().columns - others))
-
-    def line(values: list[str]) -> str:
-        return COLUMN_GAP.join(
-            _fit(value, width).ljust(width) if align == "<" else value.rjust(width)
-            for value, width, (_, _, align) in zip(values, widths, columns)
-        ).rstrip()
-
-    click.echo(line(headers))
-    for row in cells:
-        click.echo(line(row))
-
-
-def _print_mapping(value: dict) -> None:
-    for key, val in value.items():
-        if isinstance(val, dict):
-            click.echo(f"{key}:")
-            for sub_key, sub_val in val.items():
-                detail = " | ".join(f"{k}: {v}" for k, v in sub_val.items()) if isinstance(sub_val, dict) else sub_val
-                click.echo(f"  {sub_key}: {detail}")
-        else:
-            click.echo(f"{key}: {val}")
-
-
-def output(
-    ctx: click.Context,
-    value: list[dict] | dict,
-    columns: list[Column] | None = None,
-    empty: str = "",
-    footer: str = "",
-) -> None:
-    """Print JSON with --json, otherwise a table (lists) or key: value lines (dicts)."""
-    if _wants_json(ctx):
-        click.echo(json.dumps(value, indent=2, ensure_ascii=False))
-    elif isinstance(value, dict):
-        _print_mapping(value)
-    elif not value:
-        click.echo(empty)
-    else:
-        _print_table(value, columns or [])
-        if footer:
-            click.echo(footer)
-
-
-def _client_call(method: str, *args):
+    worker = threading.Thread(target=animate, daemon=True) if enabled else None
+    if worker:
+        worker.start()
     try:
-        return getattr(MidtownClient(), method)(*args)
+        yield
+    finally:
+        if worker:
+            stop.set()
+            worker.join()
+            click.echo("\r            \r", nl=False, err=True)
+
+
+class CommandError(click.ClickException):
+    def show(self, file=None):
+        click.echo(f"✖ {self.format_message()}", file=file, err=file is None)
+
+
+OPERATIONS = {
+    "orders": ("Fetching orders", "Orders retrieved"),
+    "order": ("Fetching order details", "Order details retrieved"),
+    "cart": ("Fetching cart", "Cart retrieved"),
+    "preorders": ("Fetching preorders", "Preorders retrieved"),
+    "wishlist": ("Fetching wishlist", "Wishlist retrieved"),
+    "account": ("Fetching account details", "Account details retrieved"),
+    "search": ("Fetching catalog results", "Catalog results retrieved"),
+}
+
+
+def _client_call(ctx: click.Context, method: str, *args):
+    opts = ctx.find_root().obj or {}
+    log_status = not (opts.get("json") or opts.get("quiet"))
+    action, done = OPERATIONS.get(method, (method.title(), method.title()))
+    started = time.monotonic()
+    try:
+        if log_status:
+            click.echo(f"ℹ {action}...", err=True)
+        with _spinner(log_status and sys.stderr.isatty()):
+            result = getattr(MidtownClient(), method)(*args)
+        if log_status:
+            items = result if isinstance(result, list) else result.get("items") if isinstance(result, dict) else None
+            count = len(items) if isinstance(items, list) else None
+            detail = f": {count} {'item' if count == 1 else 'items'}" if count is not None else ""
+            click.echo(f"✔ {done}{detail} ({time.monotonic() - started:.1f}s)", err=True)
+        return result
     except Exception as exc:
-        raise click.ClickException(str(exc)) from exc
+        if opts.get("verbose"):
+            traceback.print_exc(file=sys.stderr)
+        message = "Unable to reach Midtown. Check your connection and try again." if isinstance(exc, requests.RequestException) else str(exc)
+        raise CommandError(message) from exc
 
 
 def _money(value: object) -> str:
-    return f"${value:.2f}" if isinstance(value, (int, float)) else ""
+    return f"${Decimal(str(value)):,.2f}" if isinstance(value, (int, float)) else ""
 
 
 def _open_image(path: Path) -> None:
@@ -220,7 +215,7 @@ def _write_export(value: list[dict], output_path: str, format_name: str) -> None
         click.echo(content, nl=False)
     else:
         Path(output_path).write_text(content, encoding="utf-8")
-        click.echo(f"Exported {len(value)} records to {output_path}")
+        click.echo(f"Exported {len(value)} records to {output_path}", err=True)
 
 
 export_options = [
@@ -234,7 +229,7 @@ _with_export_options = _with_options(export_options)
 
 
 @click.group()
-@json_option
+@output_options
 @click.pass_context
 def cli(ctx: click.Context) -> None:
     """Headless CLI for your Midtown Comics account.
@@ -306,7 +301,7 @@ def auth_login(remote: bool, timeout: int) -> None:
     except Exception as exc:
         hint = "" if remote else "\nIf it keeps failing, run: midtown auth login --remote"
         raise click.ClickException(f"{exc}{hint}") from exc
-    click.echo("Logged in. Session saved.")
+    click.echo("Logged in. Session saved.", err=True)
 
 
 @auth.command("logout")
@@ -318,11 +313,11 @@ def auth_logout() -> None:
     SESSION_FILE.unlink(missing_ok=True)
     if remote_auth.PROFILE_DIR.exists():
         shutil.rmtree(remote_auth.PROFILE_DIR)
-    click.echo("Logged out. The next command will log in again with .env.")
+    click.echo("Logged out. The next command will log in again with .env.", err=True)
 
 
 @auth.command("status")
-@json_option
+@output_options
 @click.pass_context
 def auth_status(ctx: click.Context) -> None:
     """Show which credential and session files exist."""
@@ -360,7 +355,7 @@ ITEM_COLUMNS: list[Column] = [
 
 @cli.group(invoke_without_command=True)
 @_with_options(period_options)
-@json_option
+@output_options
 @click.pass_context
 def orders(ctx: click.Context) -> None:
     """List your orders (date, number, status, comics, total).
@@ -378,11 +373,11 @@ def orders(ctx: click.Context) -> None:
 
 @orders.command("show")
 @click.argument("order_number")
-@json_option
+@output_options
 @click.pass_context
 def orders_show(ctx: click.Context, order_number: str) -> None:
     """Show one order and its comics."""
-    order = _client_call("order", order_number)
+    order = _client_call(ctx, "order", order_number)
     if _wants_json(ctx):
         output(ctx, order)
         return
@@ -432,7 +427,7 @@ def _orders_in_period(ctx: click.Context) -> list[dict]:
     if start and end and start > end:
         raise click.UsageError("--from must be on or before --to.")
     if not (start or end or month):
-        return _client_call("orders")
+        return _client_call(ctx, "orders")
 
     def in_period(order: dict) -> bool:
         placed = _order_date(order)
@@ -443,7 +438,7 @@ def _orders_in_period(ctx: click.Context) -> list[dict]:
             and (not month or placed.strftime("%Y-%m") == month)
         )
 
-    return [order for order in _client_call("orders") if in_period(order)]
+    return [order for order in _client_call(ctx, "orders") if in_period(order)]
 
 
 def _by_month(orders_result: list[dict]) -> list[tuple[str, list[dict]]]:
@@ -464,7 +459,7 @@ def _output_orders_by_month(ctx: click.Context, orders_result: list[dict]) -> No
 @orders.command("stats")
 @_with_options(period_options)
 @click.option("--with-cart", is_flag=True, help="Add your current cart to see the total you would reach.")
-@json_option
+@output_options
 @click.pass_context
 def orders_stats(ctx: click.Context, with_cart: bool) -> None:
     """Show how much you have spent, by order status or --by-month.
@@ -493,7 +488,7 @@ def orders_stats(ctx: click.Context, with_cart: bool) -> None:
         },
     }
     if with_cart:
-        cart_result = _client_call("cart")
+        cart_result = _client_call(ctx, "cart")
         stats = {
             **stats,
             "cart_items": cart_result["count"],
@@ -504,12 +499,12 @@ def orders_stats(ctx: click.Context, with_cart: bool) -> None:
 
 
 @orders.command("duplicates")
-@json_option
+@output_options
 @click.pass_context
 def orders_duplicates(ctx: click.Context) -> None:
     """Show comics you bought in more than one order."""
     counts: dict[str, dict] = {}
-    for order in _client_call("orders"):
+    for order in _client_call(ctx, "orders"):
         for item in order.get("items", []):
             key = item.get("product_id") or item.get("title")
             if key:
@@ -524,9 +519,10 @@ def orders_duplicates(ctx: click.Context) -> None:
 
 @orders.command("export")
 @_with_export_options
-def orders_export(format_name: str, output_path: str) -> None:
+@click.pass_context
+def orders_export(ctx: click.Context, format_name: str, output_path: str) -> None:
     """Save your orders to a JSON or CSV file: -o orders.csv --format csv"""
-    _write_export(_client_call("orders"), output_path, format_name)
+    _write_export(_client_call(ctx, "orders"), output_path, format_name)
 
 
 def _comic_items(orders_result: list[dict]) -> list[dict]:
@@ -552,7 +548,7 @@ def _comics_summary(items: list[dict]) -> dict:
 
 @cli.command()
 @_with_options(period_options)
-@json_option
+@output_options
 @click.pass_context
 def comics(ctx: click.Context) -> None:
     """List every comic you have bought, newest first.
@@ -579,6 +575,7 @@ def comics(ctx: click.Context) -> None:
         ("PRICE", lambda item: item.get("unit_price"), ">"),
         ("STATUS", lambda item: item.get("status"), "<"),
         ("ORDER", lambda item: item["order_number"], "<"),
+        ("LINK", lambda item: _product_url(item, BASE_URL), "<"),
     ], empty=_empty("No comics", ctx), footer=f"Total: {summary['comics']} comics · {summary['distinct']} distinct")
 
 
@@ -586,14 +583,14 @@ def comics(ctx: click.Context) -> None:
 
 
 @cli.command()
-@json_option
+@output_options
 @click.pass_context
 def preorders(ctx: click.Context) -> None:
     """List pre-ordered comics not released yet, with release dates.
 
     Includes pending items of your orders and Midtown Previews pre-orders.
     """
-    items = _client_call("preorders")
+    items = _client_call(ctx, "preorders")
     quantity = sum(item.get("quantity", 1) for item in items)
     total = sum(
         (Decimal(str(item["unit_price"])) * item.get("quantity", 1) for item in items if item.get("unit_price") is not None),
@@ -605,15 +602,16 @@ def preorders(ctx: click.Context) -> None:
         ("QTY", lambda item: item.get("quantity", 1), ">"),
         ("PRICE", lambda item: item.get("unit_price"), ">"),
         ("ORDER", lambda item: item.get("order_number"), "<"),
-    ], empty="No pending pre-orders.", footer=f"Total: {quantity} items · ${total:.2f}")
+        ("LINK", lambda item: _product_url(item, BASE_URL), "<"),
+    ], empty="No pending pre-orders.", footer=f"Total: {quantity} items · ${total:,.2f}")
 
 
 @cli.command()
-@json_option
+@output_options
 @click.pass_context
 def cart(ctx: click.Context) -> None:
     """Show your shopping cart (read-only)."""
-    result = _client_call("cart")
+    result = _client_call(ctx, "cart")
     if _wants_json(ctx) or not result["items"]:
         output(ctx, result if _wants_json(ctx) else [], empty="Your cart is empty.")
         return
@@ -628,30 +626,32 @@ def cart(ctx: click.Context) -> None:
 
 
 @cli.group(invoke_without_command=True)
-@json_option
+@output_options
 @click.pass_context
 def wishlist(ctx: click.Context) -> None:
     """List your wishlist with current prices."""
     if ctx.invoked_subcommand is None:
-        output(ctx, _client_call("wishlist"), [
+        output(ctx, _client_call(ctx, "wishlist"), [
             ("TITLE", lambda item: item.get("title"), "<"),
             ("PRICE", lambda item: item.get("price"), ">"),
+            ("LINK", lambda item: _product_url(item, BASE_URL), "<"),
         ], empty="Your wishlist is empty.")
 
 
 @wishlist.command("export")
 @_with_export_options
-def wishlist_export(format_name: str, output_path: str) -> None:
+@click.pass_context
+def wishlist_export(ctx: click.Context, format_name: str, output_path: str) -> None:
     """Save your wishlist to a JSON or CSV file: -o wishlist.csv --format csv"""
-    _write_export(_client_call("wishlist"), output_path, format_name)
+    _write_export(_client_call(ctx, "wishlist"), output_path, format_name)
 
 
 @cli.command()
-@json_option
+@output_options
 @click.pass_context
 def account(ctx: click.Context) -> None:
     """Show your profile: name, date of birth and email."""
-    output(ctx, _client_call("account"))
+    output(ctx, _client_call(ctx, "account"))
 
 
 # ---------------------------------------------------------------- search
@@ -690,7 +690,7 @@ def cover(product_id: str, size: str) -> None:
 @click.option("--per-page", type=click.IntRange(min=1, max=100), default=100, show_default=True,
               help="Results per page (fewer is faster).")
 @click.option("--page", type=click.IntRange(min=1), default=1, show_default=True, help="Results page number.")
-@json_option
+@output_options
 @click.pass_context
 def search(ctx: click.Context, query: str, preorders: bool, out_of_stock: bool, release_date: date | None, with_upc: bool, per_page: int, page: int) -> None:
     """Search the Midtown Comics catalog.
@@ -705,11 +705,12 @@ def search(ctx: click.Context, query: str, preorders: bool, out_of_stock: bool, 
       midtown search "x-men" --per-page 20 --page 2
       midtown search --release-date 2026-11-18
     """
-    output(ctx, _client_call("search", query, per_page, page, preorders, out_of_stock, release_date, with_upc), [
+    output(ctx, _client_call(ctx, "search", query, per_page, page, preorders, out_of_stock, release_date, with_upc), [
         ("TITLE", lambda item: item.get("title"), "<"),
         ("PRICE", lambda item: item.get("price"), ">"),
         ("AVAILABILITY", lambda item: item.get("availability"), "<"),
         ("RELEASE", lambda item: item.get("release_date"), "<"),
+        ("LINK", lambda item: _product_url(item, BASE_URL), "<"),
     ], empty="No results.")
 
 
