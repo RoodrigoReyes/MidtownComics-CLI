@@ -539,13 +539,15 @@ def test_parse_release_date_from_product_page():
     assert parse_release_date("<html>no date</html>") == ""
 
 
-def test_parse_upc_from_product_page():
-    from midtown.parsers import parse_upc
+def test_parse_product_code_from_product_page():
+    from midtown.parsers import parse_product_code
 
-    html = '<div><span id="upc-code">76194138023003921</span></div>'
+    upc = '<span id="upc-code">76194138023003921</span><span id="isbn-code">9781545823736</span>'
+    isbn = '<span id="diamond-code">0226PZ1021</span><span id="isbn-code">9781545823736</span>'
 
-    assert parse_upc(html) == "76194138023003921"
-    assert parse_upc("<html>no upc</html>") is None
+    assert parse_product_code(upc) == ("76194138023003921", "upc")  # UPC wins over ISBN
+    assert parse_product_code(isbn) == ("9781545823736", "isbn")  # ISBN fallback
+    assert parse_product_code("<html>no code</html>") == (None, None)
 
 
 def test_parse_preview_items_reads_rows_by_section_and_skips_empty_tables():

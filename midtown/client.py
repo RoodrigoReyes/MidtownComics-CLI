@@ -20,8 +20,8 @@ from .parsers import (
     parse_orders,
     parse_preview_items,
     parse_product_body,
+    parse_product_code,
     parse_release_date,
-    parse_upc,
     parse_search,
     parse_wishlist,
 )
@@ -202,13 +202,13 @@ class MidtownClient:
         response.raise_for_status()
         return parse_release_date(response.text)
 
-    def _upc(self, product_id: str) -> str | None:
-        """Fetch the product page and read its UPC; the search page doesn't carry it."""
+    def _product_code(self, product_id: str) -> tuple[str | None, str | None]:
+        """Fetch the product page for its UPC/ISBN; the search page doesn't carry them."""
         if not product_id:
-            return None
+            return None, None
         response = self.session.get(urljoin(self.base_url, f"/product/{product_id}"), timeout=30)
         response.raise_for_status()
-        return parse_upc(response.text)
+        return parse_product_code(response.text)
 
     def search(self, query: str = "", per_page: int = 100, page: int = 1, include_preorders: bool = False, show_out_of_stock: bool = False, release_date: date | None = None, with_upc: bool = False) -> list[dict]:
         # Same as the site: the "Include Pre-orders" (rel) and "Show out of stock" (os)
@@ -235,10 +235,10 @@ class MidtownClient:
             for product in products
         ]
         if with_upc:
-            # Each UPC needs its own product-page request: the search page doesn't include it.
+            # Each code needs its own product-page request: the search page doesn't include it.
             with ThreadPoolExecutor(max_workers=8) as pool:
-                upcs = pool.map(self._upc, [product["product_id"] for product in results])
-            results = [{**product, "upc": upc} for product, upc in zip(results, upcs)]
+                codes = pool.map(self._product_code, [product["product_id"] for product in results])
+            results = [{**product, "code": code, "code_type": code_type} for product, (code, code_type) in zip(results, codes)]
         return results
 
     def _product_body(self, product_id: str) -> dict:
