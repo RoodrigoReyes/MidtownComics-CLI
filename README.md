@@ -1,4 +1,10 @@
-# Midtown Comics CLI
+<p align="center">
+  <img src="public/midtown-comics-logo.png" alt="Midtown Comics CLI logo" width="200">
+</p>
+
+<h1 align="center">Midtown Comics CLI</h1>
+
+<p align="center">A command-line client for your Midtown Comics account.</p>
 
 A command-line client for your [Midtown Comics](https://www.midtowncomics.com) account. Check orders, pre-orders, your cart and wishlist, track what you spend, and search the catalog without opening a browser. It runs fine on a headless Linux server.
 
